@@ -849,6 +849,10 @@ fn call_builtin_function(
 
             generativity::make_guard!(guard);
             let compiled = enclosing_component.description.popup_menu_description.unerase(guard);
+            let extra_data = enclosing_component
+                .description
+                .extra_data_offset
+                .apply(enclosing_component.as_ref());
             let inst = crate::dynamic_item_tree::instantiate(
                 compiled.clone(),
                 Some(enclosing_component.self_weak().get().unwrap().clone()),
@@ -856,7 +860,7 @@ fn call_builtin_function(
                 Some(&crate::dynamic_item_tree::WindowOptions::UseExistingWindow(
                     component.window_adapter(),
                 )),
-                Default::default(),
+                extra_data.globals.get().unwrap().clone(),
             );
 
             generativity::make_guard!(guard);
@@ -1544,12 +1548,12 @@ fn call_builtin_function(
         BuiltinFunction::EscapeMarkdown => {
             let text: SharedString =
                 eval_expression(&arguments[0], local_context).try_into().unwrap();
-            Value::String(corelib::escape_markdown(&text).into())
+            Value::String(corelib::styled_text::escape_markdown(&text).into())
         }
         BuiltinFunction::ParseMarkdown => {
             let text: SharedString =
                 eval_expression(&arguments[0], local_context).try_into().unwrap();
-            Value::StyledText(corelib::parse_markdown(&text))
+            Value::StyledText(corelib::styled_text::parse_markdown(&text))
         }
     }
 }
@@ -2023,7 +2027,9 @@ pub fn enclosing_component_for_element<'a, 'old_id, 'new_id>(
         // (it assumes that the 'id must outlive 'a , which is not true)
         let static_guard = unsafe { generativity::Guard::new(generativity::Id::<'static>::new()) };
 
-        let parent_instance = component.parent_instance(static_guard).unwrap();
+        let parent_instance = component
+            .parent_instance(static_guard)
+            .expect("accessing deleted parent (issue #6426)");
         enclosing_component_for_element(element, parent_instance, _guard)
     }
 }
@@ -2039,11 +2045,11 @@ pub(crate) fn enclosing_component_instance_for_element<'a, 'new_id>(
     match component_instance {
         ComponentInstance::InstanceRef(component) => {
             if enclosing.is_global() && !Rc::ptr_eq(enclosing, &component.description.original) {
-                let root = component.toplevel_instance(guard);
                 ComponentInstance::GlobalComponent(
-                    root.description
+                    component
+                        .description
                         .extra_data_offset
-                        .apply(root.instance.get_ref())
+                        .apply(component.instance.get_ref())
                         .globals
                         .get()
                         .unwrap()
