@@ -671,28 +671,6 @@ impl Window {
                     delta_y: delta_y as _,
                 });
             }
-            crate::platform::WindowEvent::TouchPressed { position, .. } => {
-                self.0.process_mouse_input(MouseEvent::Pressed {
-                    position: position.to_euclid().cast(),
-                    button: crate::input::PointerEventButton::Left,
-                    click_count: 0,
-                    is_touch: true,
-                });
-            }
-            crate::platform::WindowEvent::TouchReleased { position, .. } => {
-                self.0.process_mouse_input(MouseEvent::Released {
-                    position: position.to_euclid().cast(),
-                    button: crate::input::PointerEventButton::Left,
-                    click_count: 0,
-                    is_touch: true,
-                });
-            }
-            crate::platform::WindowEvent::TouchMoved { position, .. } => {
-                self.0.process_mouse_input(MouseEvent::Moved {
-                    position: position.to_euclid().cast(),
-                    is_touch: true,
-                });
-            }
             crate::platform::WindowEvent::PointerExited => {
                 self.0.process_mouse_input(MouseEvent::Exit)
             }
@@ -729,14 +707,6 @@ impl Window {
                 if let Some(item_rc) = self.0.focus_item.borrow().upgrade() {
                     item_rc.try_scroll_into_visible();
                 }
-            }
-            crate::platform::WindowEvent::SafeAreaChanged { inset, .. } => {
-                self.0.set_window_item_safe_area(
-                    inset.top(),
-                    inset.bottom(),
-                    inset.left(),
-                    inset.right(),
-                );
             }
             crate::platform::WindowEvent::CloseRequested => {
                 if self.0.request_close() {
