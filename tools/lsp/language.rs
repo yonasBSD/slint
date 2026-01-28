@@ -726,6 +726,8 @@ pub(crate) async fn load_document_impl(
         InvalidateFile,
     }
 
+    tracing::trace!("Loading document: {url} (version: {version:?})");
+
     let Some(path) = common::uri_to_file(&url) else { return Default::default() };
     // Normalize the URL
     let Ok(url) = Url::from_file_path(path.clone()) else { return Default::default() };
@@ -789,12 +791,14 @@ pub async fn open_document(
     version: Option<i32>,
     document_cache: &mut common::DocumentCache,
 ) -> common::Result<()> {
+    tracing::debug!("Opening document: {url}");
     ctx.open_urls.borrow_mut().insert(url.clone());
 
     load_document(ctx, content, url, version, document_cache).await
 }
 
 pub async fn close_document(ctx: &Rc<Context>, url: lsp_types::Url) -> common::Result<()> {
+    tracing::debug!("Closing document: {url}");
     ctx.open_urls.borrow_mut().remove(&url);
     drop_document(ctx, url).await
 }
@@ -809,12 +813,16 @@ pub async fn load_document(
     let (extra_files, diag) =
         load_document_impl(Some(ctx), content, url.clone(), version, document_cache).await;
 
+    tracing::debug!("Loaded {url} with {} diagnostics", diag.iter().count());
+
     send_diagnostics(&ctx.server_notifier, document_cache, &extra_files, diag);
 
     Ok(())
 }
 
 pub async fn reload_document(ctx: &Rc<Context>, url: lsp_types::Url) -> common::Result<()> {
+    tracing::debug!("Reloading document: {url}");
+
     let mut document_cache = ctx.document_cache.borrow_mut();
 
     let mut diagnostics = BuildDiagnostics::default();
@@ -860,6 +868,8 @@ fn send_diagnostics(
     diag: BuildDiagnostics,
 ) {
     let lsp_diags = convert_diagnostics(extra_files, diag, document_cache.format);
+    tracing::trace!("Sending {} diagnostics to editor", lsp_diags.values().flatten().count());
+
     for (uri, _diagnostics) in lsp_diags {
         let _version = document_cache.document_version(&uri);
 
@@ -883,6 +893,7 @@ fn drop_document_impl(ctx: &Rc<Context>, url: lsp_types::Url) -> common::Result<
 }
 
 pub async fn drop_document(ctx: &Rc<Context>, url: lsp_types::Url) -> common::Result<()> {
+    tracing::debug!("Dropping document: {url}");
     // The preview cares about resources and slint files, so forward everything
     ctx.to_preview.send(&common::LspToPreviewMessage::InvalidateContents { url: url.clone() });
 
@@ -890,6 +901,7 @@ pub async fn drop_document(ctx: &Rc<Context>, url: lsp_types::Url) -> common::Re
 }
 
 pub async fn delete_document(ctx: &Rc<Context>, url: lsp_types::Url) -> common::Result<()> {
+    tracing::debug!("Deleting document: {url}");
     // The preview cares about resources and slint files, so forward everything
     ctx.to_preview.send(&common::LspToPreviewMessage::ForgetFile { url: url.clone() });
 
@@ -902,11 +914,14 @@ pub async fn trigger_file_watcher(
     typ: lsp_types::FileChangeType,
 ) -> common::Result<()> {
     if !ctx.open_urls.borrow().contains(&url) {
+        tracing::debug!("File watcher triggered for {url} (type: {:?})", typ);
         if typ == lsp_types::FileChangeType::DELETED {
             delete_document(ctx, url).await?;
         } else {
             drop_document(ctx, url).await?;
         }
+    } else {
+        tracing::trace!("Ignoring file watcher event for open document: {url}");
     }
     Ok(())
 }
@@ -1425,7 +1440,65 @@ pub async fn startup_lsp(ctx: &Context) -> common::Result<()> {
     load_configuration(ctx).await
 }
 
+#[derive(Debug)]
+struct WorkspaceConfig {
+    hide_ui: Option<bool>,
+    include_paths: Option<Vec<PathBuf>>,
+    library_paths: Option<HashMap<String, PathBuf>>,
+    style: Option<String>,
+    experimental: bool,
+}
+
+fn parse_configuration(workspace_config: Vec<serde_json::Value>) -> WorkspaceConfig {
+    let mut hide_ui = None;
+    let mut include_paths = None;
+    let mut library_paths = None;
+    let mut style = None;
+    let mut experimental = false;
+
+    for config_value in workspace_config {
+        if let Some(config_object) = config_value.as_object() {
+            if let Some(ip) = config_object.get("includePaths").and_then(|v| v.as_array()) {
+                if !ip.is_empty() {
+                    include_paths = Some(
+                        ip.iter()
+                            .filter_map(serde_json::Value::as_str)
+                            .map(PathBuf::from)
+                            .collect(),
+                    );
+                }
+            }
+            if let Some(lp) = config_object.get("libraryPaths").and_then(|v| v.as_object()) {
+                if !lp.is_empty() {
+                    library_paths = Some(
+                        lp.iter()
+                            .filter_map(|(key, value)| {
+                                value.as_str().map(|v| (key.to_string(), PathBuf::from(v)))
+                            })
+                            .collect(),
+                    );
+                }
+            }
+            if let Some(s) =
+                config_object.get("preview").and_then(|v| v.as_object()?.get("style")?.as_str())
+            {
+                if !s.is_empty() {
+                    style = Some(s.to_string());
+                }
+            }
+            hide_ui =
+                config_object.get("preview").and_then(|v| v.as_object()?.get("hide_ui")?.as_bool());
+            if config_object.get("experimental").and_then(|v| v.as_bool()) == Some(true) {
+                experimental = true;
+            }
+        }
+    }
+    WorkspaceConfig { hide_ui, include_paths, library_paths, style, experimental }
+}
+
 pub async fn load_configuration(ctx: &Context) -> common::Result<()> {
+    tracing::debug!("Loading configuration from client");
+
     if !ctx
         .init_param
         .capabilities
@@ -1437,7 +1510,7 @@ pub async fn load_configuration(ctx: &Context) -> common::Result<()> {
         return Ok(());
     }
 
-    let r = ctx
+    let workspace_config = ctx
         .server_notifier
         .send_request::<lsp_types::request::WorkspaceConfiguration>(
             lsp_types::ConfigurationParams {
@@ -1449,50 +1522,23 @@ pub async fn load_configuration(ctx: &Context) -> common::Result<()> {
         )?
         .await?;
 
-    let (hide_ui, include_paths, library_paths, style, experimental) = {
-        let mut hide_ui = None;
-        let mut include_paths = None;
-        let mut library_paths = None;
-        let mut style = None;
-        let mut experimental = false;
-
-        for v in r {
-            if let Some(o) = v.as_object() {
-                if let Some(ip) = o.get("includePaths").and_then(|v| v.as_array()) {
-                    if !ip.is_empty() {
-                        include_paths =
-                            Some(ip.iter().filter_map(|x| x.as_str()).map(PathBuf::from).collect());
-                    }
-                }
-                if let Some(lp) = o.get("libraryPaths").and_then(|v| v.as_object()) {
-                    if !lp.is_empty() {
-                        library_paths = Some(
-                            lp.iter()
-                                .filter_map(|(k, v)| {
-                                    v.as_str().map(|v| (k.to_string(), PathBuf::from(v)))
-                                })
-                                .collect(),
-                        );
-                    }
-                }
-                if let Some(s) =
-                    o.get("preview").and_then(|v| v.as_object()?.get("style")?.as_str())
-                {
-                    if !s.is_empty() {
-                        style = Some(s.to_string());
-                    }
-                }
-                hide_ui = o.get("preview").and_then(|v| v.as_object()?.get("hide_ui")?.as_bool());
-                if o.get("experimental").and_then(|v| v.as_bool()) == Some(true) {
-                    experimental = true;
-                }
-            }
-        }
-        (hide_ui, include_paths, library_paths, style, experimental)
-    };
+    let workspace_config = parse_configuration(workspace_config);
+    tracing::debug!("Loaded configuration: {workspace_config:?}");
+    let WorkspaceConfig { hide_ui, include_paths, library_paths, style, experimental } =
+        workspace_config;
 
     let document_cache = &mut ctx.document_cache.borrow_mut();
-    let cc = document_cache.reconfigure(style, include_paths, library_paths, experimental).await?;
+    let mut diag = BuildDiagnostics::default();
+    let (cc, all_files) = document_cache
+        .reconfigure(style, include_paths, library_paths, experimental, &mut diag)
+        .await;
+
+    send_diagnostics(
+        &ctx.server_notifier,
+        document_cache,
+        &all_files.iter().filter_map(common::uri_to_file).collect(),
+        diag,
+    );
 
     let config = common::PreviewConfig {
         hide_ui,
@@ -1503,20 +1549,9 @@ pub async fn load_configuration(ctx: &Context) -> common::Result<()> {
         enable_experimental: cc.enable_experimental,
     };
     *ctx.preview_config.borrow_mut() = config.clone();
-    let mut diag = BuildDiagnostics::default();
-    let all_urls = document_cache.all_urls().collect::<Vec<_>>();
-    for url in &all_urls {
-        document_cache.reload_cached_file(url, &mut diag).await;
-    }
-
     ctx.to_preview.send(&common::LspToPreviewMessage::SetConfiguration { config });
 
-    send_diagnostics(
-        &ctx.server_notifier,
-        document_cache,
-        &all_urls.iter().filter_map(common::uri_to_file).collect(),
-        diag,
-    );
+    tracing::debug!("Loaded configuration from client");
 
     Ok(())
 }
