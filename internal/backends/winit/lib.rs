@@ -81,10 +81,7 @@ mod renderer {
         ) -> Result<Arc<winit::window::Window>, PlatformError>;
     }
 
-    #[cfg(any(
-        all(feature = "renderer-femtovg", supports_opengl),
-        feature = "renderer-femtovg-wgpu"
-    ))]
+    #[cfg(enable_femtovg_renderer)]
     pub(crate) mod femtovg;
     #[cfg(enable_skia_renderer)]
     pub(crate) mod skia;
@@ -489,7 +486,7 @@ impl BackendBuilder {
                     }
                 }
             }
-            #[cfg(feature = "unstable-wgpu-27")]
+            #[cfg(all(enable_skia_renderer, feature = "unstable-wgpu-27"))]
             (None, Some(RequestedGraphicsAPI::WGPU27(..))) => {
                 renderer::skia::WinitSkiaRenderer::new_wgpu_27_suspended
             }
