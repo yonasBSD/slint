@@ -50,18 +50,16 @@ use bevy::{
     input::{ButtonState, mouse::MouseButtonInput},
     prelude::*,
     render::{
-        render_resource::{
-            Extent3d, TextureDescriptor, TextureDimension, TextureFormat,
-            TextureUsages,
-        },
-        renderer::RenderDevice,
+        Render, RenderApp,
         extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_asset::RenderAssets,
+        render_resource::{
+            Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
+        },
+        renderer::{RenderDevice, RenderInstance},
         texture::GpuImage,
-        Render, RenderApp,
     },
 };
-use wgpu_28 as wgpu;
 use i_slint_renderer_femtovg::FemtoVGWGPURenderer;
 use slint::{LogicalPosition, PhysicalSize, platform::WindowEvent};
 use std::{
@@ -69,6 +67,7 @@ use std::{
     rc::{Rc, Weak},
     sync::{Arc, Mutex},
 };
+use wgpu_28 as wgpu;
 
 const UI_WIDTH: u32 = 800;
 const UI_HEIGHT: u32 = 600;
@@ -149,9 +148,10 @@ impl slint::platform::WindowAdapter for BevyWindowAdapter {
 }
 
 impl BevyWindowAdapter {
-    fn new(device: wgpu::Device, queue: wgpu::Queue) -> Rc<Self> {
+    fn new(instance: wgpu::Instance, device: wgpu::Device, queue: wgpu::Queue) -> Rc<Self> {
         // Create renderer using the new helper
-        let renderer = FemtoVGWGPURenderer::new(device, queue).expect("Failed to create renderer");
+        let renderer =
+            FemtoVGWGPURenderer::new(instance, device, queue).expect("Failed to create renderer");
 
         Rc::new_cyclic(|self_weak: &Weak<Self>| Self {
             size: Cell::new(slint::PhysicalSize::new(UI_WIDTH, UI_HEIGHT)),
@@ -177,6 +177,7 @@ impl BevyWindowAdapter {
 /// Registered via `slint::platform::set_platform()` before creating Slint components.
 /// Stores the WGPU device and queue needed to create `FemtoVGWGPURenderer` instances.
 struct SlintBevyPlatform {
+    instance: wgpu::Instance,
     device: wgpu::Device,
     queue: wgpu::Queue,
 }
@@ -185,10 +186,8 @@ impl slint::platform::Platform for SlintBevyPlatform {
     fn create_window_adapter(
         &self,
     ) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
-        let adapter = BevyWindowAdapter::new(
-            self.device.clone(),
-            self.queue.clone(),
-        );
+        let adapter =
+            BevyWindowAdapter::new(self.instance.clone(), self.device.clone(), self.queue.clone());
         SLINT_WINDOWS.with(|windows| {
             windows.borrow_mut().push(Rc::downgrade(&adapter));
         });
@@ -308,10 +307,14 @@ fn handle_input(
             };
             match event.state {
                 ButtonState::Pressed => {
-                    adapter.slint_window.dispatch_event(WindowEvent::PointerPressed { button, position });
+                    adapter
+                        .slint_window
+                        .dispatch_event(WindowEvent::PointerPressed { button, position });
                 }
                 ButtonState::Released => {
-                    adapter.slint_window.dispatch_event(WindowEvent::PointerReleased { button, position });
+                    adapter
+                        .slint_window
+                        .dispatch_event(WindowEvent::PointerReleased { button, position });
                 }
             }
         }
@@ -335,7 +338,9 @@ fn setup(
             format: TextureFormat::Rgba8Unorm,
             mip_level_count: 1,
             sample_count: 1,
-            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST | TextureUsages::RENDER_ATTACHMENT,
+            usage: TextureUsages::TEXTURE_BINDING
+                | TextureUsages::COPY_DST
+                | TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         },
         ..default()
@@ -362,10 +367,12 @@ fn setup(
     let cube_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let quad_mesh = meshes.add(Mesh::from(Rectangle::new(1.0, 1.0)));
 
-     commands
+    commands
         .spawn((
             Mesh3d(cube_mesh),
-            MeshMaterial3d(materials.add(StandardMaterial { base_color: Color::WHITE, ..default() })),
+            MeshMaterial3d(
+                materials.add(StandardMaterial { base_color: Color::WHITE, ..default() }),
+            ),
             Transform::from_xyz(0.0, 0.0, -0.5)
                 .with_rotation(Quat::from_rotation_y(0.5))
                 .with_scale(Vec3::splat(2.0)),
@@ -386,12 +393,7 @@ fn setup(
     ));
 
     commands.spawn((
-        PointLight {
-            intensity: 2_000_000.0,
-            range: 100.0,
-            shadow_maps_enabled: true,
-            ..default()
-        },
+        PointLight { intensity: 2_000_000.0, range: 100.0, shadow_maps_enabled: true, ..default() },
         Transform::from_xyz(8.0, 16.0, 8.0),
     ));
 
@@ -425,7 +427,9 @@ fn send_slint_texture(
     sender: Res<TextureSender>,
     mut sent: Local<bool>,
 ) {
-    if *sent { return; }
+    if *sent {
+        return;
+    }
     if let Some(handle) = handle {
         if let Some(gpu_image) = gpu_images.get(&handle.0) {
             let texture = (*gpu_image.texture).clone();
@@ -436,10 +440,7 @@ fn send_slint_texture(
 }
 
 /// Renders the Slint UI to the shared GPU texture each frame.
-fn render_slint(
-    slint_context: Option<NonSend<SlintContext>>,
-    shared: Res<SlintSharedTexture>,
-) {
+fn render_slint(slint_context: Option<NonSend<SlintContext>>, shared: Res<SlintSharedTexture>) {
     let Some(ctx) = slint_context else { return };
     slint::platform::update_timers_and_animations();
     if let Some(texture) = shared.texture.lock().unwrap().as_ref() {
@@ -450,10 +451,11 @@ fn render_slint(
 /// Initializes the Slint platform and creates the Demo UI component.
 /// This runs as a startup system after `setup` to ensure Bevy's render device is available.
 fn initialize_slint(world: &mut World) {
+    let instance = (**world.resource::<RenderInstance>().0).clone();
     let device = world.resource::<RenderDevice>().wgpu_device().clone();
     let queue = (**world.resource::<bevy::render::renderer::RenderQueue>().0).clone();
 
-    let platform = SlintBevyPlatform { device, queue };
+    let platform = SlintBevyPlatform { instance, device, queue };
     slint::platform::set_platform(Box::new(platform)).unwrap();
 
     let instance = Demo::new().unwrap();
@@ -490,10 +492,18 @@ fn rotate_cube(
     for mut transform in query.iter_mut() {
         let speed = 2.0;
         let delta = speed * time.delta_secs();
-        if keyboard.pressed(KeyCode::ArrowUp) { transform.rotate_x(delta); }
-        if keyboard.pressed(KeyCode::ArrowDown) { transform.rotate_x(-delta); }
-        if keyboard.pressed(KeyCode::ArrowLeft) { transform.rotate_y(delta); }
-        if keyboard.pressed(KeyCode::ArrowRight) { transform.rotate_y(-delta); }
+        if keyboard.pressed(KeyCode::ArrowUp) {
+            transform.rotate_x(delta);
+        }
+        if keyboard.pressed(KeyCode::ArrowDown) {
+            transform.rotate_x(-delta);
+        }
+        if keyboard.pressed(KeyCode::ArrowLeft) {
+            transform.rotate_y(delta);
+        }
+        if keyboard.pressed(KeyCode::ArrowRight) {
+            transform.rotate_y(-delta);
+        }
     }
 }
 
@@ -503,14 +513,14 @@ fn main() {
     let mut app = App::new();
 
     app.add_plugins(DefaultPlugins)
-       .insert_resource(SlintSharedTexture {
-           receiver: Mutex::new(rx),
-           texture: Arc::new(Mutex::new(None)),
-       })
-       .init_resource::<CursorState>()
-       .add_plugins(ExtractResourcePlugin::<SlintImageHandle>::default())
-       .add_systems(Startup, (setup, initialize_slint).chain())
-       .add_systems(Update, (receive_texture, handle_input, render_slint, rotate_cube).chain());
+        .insert_resource(SlintSharedTexture {
+            receiver: Mutex::new(rx),
+            texture: Arc::new(Mutex::new(None)),
+        })
+        .init_resource::<CursorState>()
+        .add_plugins(ExtractResourcePlugin::<SlintImageHandle>::default())
+        .add_systems(Startup, (setup, initialize_slint).chain())
+        .add_systems(Update, (receive_texture, handle_input, render_slint, rotate_cube).chain());
 
     let render_app = app.sub_app_mut(RenderApp);
     render_app.insert_resource(TextureSender(tx));
