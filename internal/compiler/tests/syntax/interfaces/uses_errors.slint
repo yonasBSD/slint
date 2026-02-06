@@ -38,6 +38,7 @@ export component MultipleErrors uses { MissingInterface from base, Rectangle fro
 
 export interface ValidInterface {
     in-out property <int> value;
+    callback speak();
 }
 
 export component MissingChild uses { ValidInterface from base} { }
@@ -50,19 +51,51 @@ export component ChildDoesNotImplementInterface uses { ValidInterface from base 
 
 component ValidBase implements ValidInterface { }
 
-export component DuplicatePropertyName uses { ValidInterface from base } {
+export component ConflictingNames uses { ValidInterface from base } {
     base := ValidBase { }
 
     in-out property <int> value;
-//                        >   <error{Cannot override property 'value' from 'ValidInterface'}
+//                        >   <error{Cannot override 'value' from 'ValidInterface'}
+
+    callback speak();
+//           >   <error{Cannot override 'speak' from 'ValidInterface'}
+
 }
 
-component BaseWithProperty {
+component BaseWithConflicts {
     in-out property <int> value: 10;
+    callback speak();
     @children
 }
 
-export component DuplicatPropertyOnBase uses { ValidInterface from base } inherits BaseWithProperty {
-//                                             >             <error{Cannot use interface 'ValidInterface' because property 'value' conflicts with existing property in 'BaseWithProperty'}
+export component DuplicatPropertyOnBase uses { ValidInterface from base } inherits BaseWithConflicts {
+//                                             >             <error{Cannot use interface 'ValidInterface' because 'speak' conflicts with an existing callback in 'BaseWithConflicts'}
+//                                             >             <^error{Cannot use interface 'ValidInterface' because 'value' conflicts with an existing property in 'BaseWithConflicts'}
     base := ValidBase { }
+}
+
+interface InterfaceA {
+    in property <bool> test;
+}
+
+component AImpl implements InterfaceA { }
+
+interface InterfaceB {
+    out property <bool> test: true;
+}
+
+component BImpl implements InterfaceB { }
+
+export component ConflictingUses uses { InterfaceA from a, InterfaceB from b } {
+//                                                         >         <error{'test' occurs in 'InterfaceB' and 'InterfaceA'}
+    a := AImpl { }
+
+    b := BImpl { }
+}
+
+export component DuplicateUses uses { InterfaceA from a, InterfaceA from b } {
+//                                                       >         <error{'InterfaceA' is used multiple times}
+    a := AImpl { }
+
+    b := AImpl { }
 }
