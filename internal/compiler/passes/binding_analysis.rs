@@ -536,6 +536,45 @@ fn recurse_expression(
             g.rect = Default::default(); // already visited;
             g.visit_named_references(&mut |nr| vis(&nr.clone().into(), P))
         }
+        Expression::SolveFlexBoxLayout(layout)
+        | Expression::ComputeFlexBoxLayoutInfo(layout, _) => {
+            if let Some(nr) = layout.direction.as_ref() {
+                vis(&nr.clone().into(), P);
+            }
+            // Visit all layout geometry dependencies
+            if matches!(expr, Expression::SolveFlexBoxLayout(..)) {
+                // FlexBoxLayout needs both width and height
+                if let Some(nr) = layout.geometry.rect.width_reference.as_ref() {
+                    vis(&nr.clone().into(), P);
+                }
+                if let Some(nr) = layout.geometry.rect.height_reference.as_ref() {
+                    vis(&nr.clone().into(), P);
+                }
+            } else if let Expression::ComputeFlexBoxLayoutInfo(_, _orientation) = expr {
+                // Technically, due to wrapping, there's a dependency on width for the vertical orientation (for Rows/RowsReverse)
+                // or a dependency on height for the horizontal orientation (for Columns/ColumnsReverse).
+                // But since the flex direction, which can be changed at runtime, we don't know which one will apply.
+                // And doing both leads to binding loops...
+                // We could detect the case of a constant flex direction (like in lower_expression.rs) but
+                // that still wouldn't fix the case of runtime direction changes...
+                /*if *orientation == Orientation::Vertical
+                    && let Some(nr) = layout.geometry.rect.width_reference.as_ref()
+                {
+                    vis(&nr.clone().into(), P);
+                }
+                if *orientation == Orientation::Horizontal
+                    && let Some(nr) = layout.geometry.rect.height_reference.as_ref()
+                {
+                    vis(&nr.clone().into(), P);
+                }*/
+                // Visit item dependencies for relevant orientations
+                visit_layout_items_dependencies(layout.elems.iter(), Orientation::Horizontal, vis);
+                visit_layout_items_dependencies(layout.elems.iter(), Orientation::Vertical, vis);
+            }
+            let mut g = layout.geometry.clone();
+            g.rect = Default::default(); // already visited;
+            g.visit_named_references(&mut |nr| vis(&nr.clone().into(), P))
+        }
         Expression::OrganizeGridLayout(layout) => {
             let mut layout = layout.clone();
             layout.visit_rowcol_named_references(&mut |nr: &mut NamedReference| {

@@ -437,6 +437,13 @@ export component HorizontalLayout {
     in property <LayoutAlignment> alignment;
 }
 
+export component FlexBoxLayout {
+    in property <length> spacing-horizontal;
+    in property <length> spacing-vertical;
+    in property <length> spacing;
+    in property <FlexDirection> flex-direction;
+}
+
 component MoveTo {
     in property <float> x;
     in property <float> y;
