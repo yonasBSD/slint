@@ -45,6 +45,7 @@ impl<T: ComponentHandle> ElementRoot for T {
 
 impl<T: ComponentHandle> Sealed for T {}
 
+#[allow(clippy::enum_variant_names)]
 enum SingleElementMatch {
     MatchById { id: String, root_base: Option<String> },
     MatchByTypeName(String),
@@ -282,15 +283,14 @@ impl ElementHandle {
         let visit_attached_popups =
             |item_rc: &ItemRc, visitor: &mut dyn FnMut(ElementHandle) -> ControlFlow<R>| {
                 for (popup_elem, popup_item_tree) in active_popups {
-                    if popup_elem == item_rc {
-                        if let Some(result) = (ElementHandle {
+                    if popup_elem == item_rc
+                        && let Some(result) = (ElementHandle {
                             item: ItemRc::new(popup_item_tree.clone(), 0).downgrade(),
                             element_index: 0,
                         })
                         .visit_descendants_impl(visitor, active_popups)
-                        {
-                            return Some(result);
-                        }
+                    {
+                        return Some(result);
                     }
                 }
                 None
