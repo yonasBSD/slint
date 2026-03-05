@@ -9738,6 +9738,7 @@ dependencies = [
  "chrono",
  "css-color-parser2",
  "i-slint-backend-selector",
+ "i-slint-common",
  "i-slint-compiler",
  "i-slint-core",
  "indexmap",
