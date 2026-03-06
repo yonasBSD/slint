@@ -26,7 +26,7 @@ impl ElementRoot for RootWrapper<'_> {
 
 impl super::Sealed for RootWrapper<'_> {}
 
-#[allow(non_snake_case, unused_imports, non_camel_case_types)]
+#[allow(non_snake_case, unused_imports, non_camel_case_types, clippy::all)]
 mod proto {
     include!(concat!(env!("OUT_DIR"), "/proto.rs"));
 }
@@ -476,15 +476,14 @@ async fn message_loop(
 
         let message_size: usize =
             Cursor::new(message_size_buf).read_u32::<BigEndian>().unwrap() as usize;
-        let mut message_buf = Vec::with_capacity(message_size);
-        message_buf.resize(message_size, 0);
+        let mut message_buf = vec![0; message_size];
         if stream.read_exact(&mut message_buf).await.is_err() {
             break "Unable to read request data from AUT connection";
         }
 
         let message = match proto::RequestToAUT::from_reader(
             &mut quick_protobuf::reader::BytesReader::from_bytes(&message_buf),
-            &mut message_buf,
+            &message_buf,
         ) {
             Ok(msg) => msg,
             Err(_) => {
