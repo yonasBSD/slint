@@ -14,7 +14,7 @@ use std::cell::RefCell;
 use std::io::Cursor;
 use std::rc::{Rc, Weak};
 
-use crate::{ElementHandle, ElementRoot};
+use crate::{ElementHandle, ElementRoot, LayoutKind};
 
 struct RootWrapper<'a>(&'a ItemTreeRc);
 
@@ -379,6 +379,13 @@ impl TestingClient {
                 .to_string(),
             accessible_enabled: element.accessible_enabled().unwrap_or_default(),
             accessible_read_only: element.accessible_read_only().unwrap_or_default(),
+            layout_kind: match element.layout_kind() {
+                Some(LayoutKind::HorizontalLayout) => proto::LayoutKind::HorizontalLayout.into(),
+                Some(LayoutKind::VerticalLayout) => proto::LayoutKind::VerticalLayout.into(),
+                Some(LayoutKind::GridLayout) => proto::LayoutKind::GridLayout.into(),
+                Some(LayoutKind::FlexBox) => proto::LayoutKind::FlexBox.into(),
+                None => proto::LayoutKind::NotALayout.into(),
+            },
         })
     }
 
