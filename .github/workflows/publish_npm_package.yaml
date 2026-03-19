@@ -133,20 +133,17 @@ jobs:
               shell: bash
               working-directory: api/node
               run: |
-                  npx napi create-npm-dir -t . -c ./binaries.json
-                  mv index.${{ matrix.napi-rs-target }}.node npm/${{ matrix.napi-rs-target }}/
-                  cd npm/${{ matrix.napi-rs-target }}/
+                  npx napi create-npm-dirs --npm-dir . -c ./binaries.json
+                  mv slint-ui.${{ matrix.napi-rs-target }}.node ${{ matrix.napi-rs-target }}/
+                  cd ${{ matrix.napi-rs-target }}/
                   pnpm pkg set repository.type=git
                   pnpm pkg set repository.url=https://github.com/slint-ui/slint
-                  if [ "$RELEASE_INPUT" != "true" ]; then
-                    pnpm version $PKG_VERSION
-                  fi
                   pnpm pack
             - name: Upload artifact
               uses: actions/upload-artifact@v7
               with:
                   name: binaries-${{ matrix.rust-target }}
-                  path: "api/node/npm/${{ matrix.napi-rs-target }}/*.tgz"
+                  path: "api/node/${{ matrix.napi-rs-target }}/*.tgz"
 
     build_and_publish_npm_package:
         runs-on: ubuntu-22.04
@@ -189,7 +186,7 @@ jobs:
             - name: Prepare binary packages
               working-directory: api/node
               run: |
-                  npx napi create-npm-dir -t . -c ./binaries.json
+                  npx napi create-npm-dirs --npm-dir . -c ./binaries.json
             - name: Download artifacts
               uses: actions/download-artifact@v8
               with:
