@@ -47,10 +47,13 @@ pub const RESERVED_GRIDLAYOUT_PROPERTIES: &[(&str, Type)] = &[
     ("rowspan", Type::Int32),
 ];
 
+// Note: flex-align-self is also a flexbox property but is added in reserved_properties()
+// because Type::Enumeration requires a runtime Rc allocation.
 pub const RESERVED_FLEXBOXLAYOUT_PROPERTIES: &[(&str, Type)] = &[
     ("flex-grow", Type::Float32),
     ("flex-shrink", Type::Float32),
     ("flex-basis", Type::LogicalLength),
+    ("flex-order", Type::Int32),
 ];
 
 macro_rules! declare_enums {
@@ -96,6 +99,7 @@ pub struct BuiltinTypes {
     pub gridlayout_input_data_type: Type,
     pub path_element_type: Type,
     pub layout_item_info_type: Type,
+    pub flexbox_layout_item_info_type: Type,
 }
 
 impl BuiltinTypes {
@@ -112,8 +116,10 @@ impl BuiltinTypes {
                 .collect(),
             name: BuiltinPrivateStruct::LayoutInfo.into(),
         });
+        let enums = BuiltinEnums::new();
+        let flex_align_self_type = Type::Enumeration(enums.FlexAlignSelf.clone());
         Self {
-            enums: BuiltinEnums::new(),
+            enums,
             logical_point_type: Rc::new(Struct {
                 fields: IntoIterator::into_iter([
                     (SmolStr::new_static("x"), Type::LogicalLength),
@@ -165,14 +171,24 @@ impl BuiltinTypes {
                 name: BuiltinPrivateStruct::PathElement.into(),
             })),
             layout_item_info_type: Type::Struct(Rc::new(Struct {
+                fields: IntoIterator::into_iter([(
+                    "constraint".into(),
+                    layout_info_type.clone().into(),
+                )])
+                .collect(),
+                name: BuiltinPrivateStruct::LayoutItemInfo.into(),
+            })),
+            flexbox_layout_item_info_type: Type::Struct(Rc::new(Struct {
                 fields: IntoIterator::into_iter([
                     ("constraint".into(), layout_info_type.into()),
                     ("flex-grow".into(), Type::Float32),
                     ("flex-shrink".into(), Type::Float32),
                     ("flex-basis".into(), Type::Float32),
+                    ("flex-align-self".into(), flex_align_self_type),
+                    ("flex-order".into(), Type::Int32),
                 ])
                 .collect(),
-                name: BuiltinPrivateStruct::LayoutItemInfo.into(),
+                name: BuiltinPrivateStruct::FlexBoxLayoutItemInfo.into(),
             })),
             gridlayout_input_data_type: Type::Struct(Rc::new(Struct {
                 fields: IntoIterator::into_iter([
@@ -284,6 +300,13 @@ pub fn reserved_properties() -> impl Iterator<Item = (&'static str, Type, Proper
                 .iter()
                 .map(|(k, v)| (*k, v.clone(), PropertyVisibility::Input)),
         )
+        // flex-align-self is a flexbox-layout property but can't be in the const array
+        // because Type::Enumeration requires a runtime Rc allocation.
+        .chain(std::iter::once((
+            "flex-align-self",
+            Type::Enumeration(BUILTIN.with(|e| e.enums.FlexAlignSelf.clone())),
+            PropertyVisibility::Input,
+        )))
         .chain(IntoIterator::into_iter([
             ("absolute-position", logical_point_type().into(), PropertyVisibility::Output),
             ("forward-focus", Type::ElementReference, PropertyVisibility::Constexpr),
@@ -857,4 +880,9 @@ pub fn path_element_type() -> Type {
 /// The [`Type`] for a runtime LayoutItemInfo structure
 pub fn layout_item_info_type() -> Type {
     BUILTIN.with(|types| types.layout_item_info_type.clone())
+}
+
+/// The [`Type`] for a runtime FlexBoxLayoutItemInfo structure
+pub fn flexbox_layout_item_info_type() -> Type {
+    BUILTIN.with(|types| types.flexbox_layout_item_info_type.clone())
 }

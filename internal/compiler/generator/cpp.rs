@@ -2560,7 +2560,7 @@ fn generate_layout_item_info_decl(
         return Declaration::Function(Function {
             name: "layout_item_info".into(),
             signature: SIGNATURE.to_owned(),
-            statements: Some(vec!["return { layout_info({&static_vtable, const_cast<void *>(static_cast<const void *>(this))}, o), 0.0f, 0.0f, -1.0f };".into()]),
+            statements: Some(vec!["return { layout_info({&static_vtable, const_cast<void *>(static_cast<const void *>(this))}, o) };".into()]),
             ..Function::default()
         });
     }
@@ -2588,7 +2588,7 @@ fn generate_layout_item_info_decl(
                 write!(
                     body,
                     "if (count == index) {{\n\
-                         return {{ (o == slint::cbindgen_private::Orientation::Horizontal) ? ({layout_info_h_code}) : ({layout_info_v_code}), 0.0f, 0.0f, -1.0f }};\n\
+                         return {{ (o == slint::cbindgen_private::Orientation::Horizontal) ? ({layout_info_h_code}) : ({layout_info_v_code}) }};\n\
                      }}\n\
                      {advance}",
                 )
@@ -2605,7 +2605,7 @@ fn generate_layout_item_info_decl(
                      if (index >= count && index - count < inner_len) {{\n\
                          if (auto vrc = {inner_rep_id}.instance_at(index - count).lock()) {{\n\
                              auto vref = vrc->borrow();\n\
-                             return {{ vref.vtable->layout_info(vref, o), 0.0f, 0.0f, -1.0f }};\n\
+                             return {{ vref.vtable->layout_info(vref, o) }};\n\
                          }}\n\
                      }}\n\
                      {advance}}}\n",
@@ -2617,12 +2617,40 @@ fn generate_layout_item_info_decl(
     body.push_str(
         // Phantom cell: return "unconstrained" info (matches Rust's LayoutInfo::default()).
         // field order: max, max_percent, min, min_percent, preferred, stretch
-        "return { slint::cbindgen_private::LayoutInfo{ std::numeric_limits<float>::max(), 100.f, 0, 0, 0, 0 }, 0.0f, 0.0f, -1.0f };\n\
+        "return { slint::cbindgen_private::LayoutInfo{ std::numeric_limits<float>::max(), 100.f, 0, 0, 0, 0 } };\n\
          }\n\
-         return { layout_info({&static_vtable, const_cast<void *>(static_cast<const void *>(this))}, o), 0.0f, 0.0f, -1.0f };",
+         return { layout_info({&static_vtable, const_cast<void *>(static_cast<const void *>(this))}, o) };",
     );
     Declaration::Function(Function {
         name: "layout_item_info".into(),
+        signature: SIGNATURE.to_owned(),
+        statements: Some(vec![body]),
+        ..Function::default()
+    })
+}
+
+fn generate_flexbox_layout_item_info_decl(
+    root_sc: &llr::SubComponent,
+    ctx: &EvaluationContext,
+) -> Declaration {
+    const SIGNATURE: &str = "(slint::cbindgen_private::Orientation o, [[maybe_unused]] std::optional<size_t> child_index) const -> slint::cbindgen_private::FlexBoxLayoutItemInfo";
+
+    let body = if let Some(expr) = &root_sc.flexbox_layout_item_info_for_repeated {
+        let compiled = compile_expression(&expr.borrow(), ctx);
+        format!(
+            "[[maybe_unused]] auto self = this; \
+             auto info = {compiled}; \
+             info.constraint = layout_item_info(o, child_index).constraint; \
+             return info;"
+        )
+    } else {
+        "auto base = layout_item_info(o, child_index); \
+         return { base.constraint, 0.0f, 0.0f, -1.0f, slint::cbindgen_private::FlexAlignSelf::Auto, 0 };"
+            .to_owned()
+    };
+
+    Declaration::Function(Function {
+        name: "flexbox_layout_item_info".into(),
         signature: SIGNATURE.to_owned(),
         statements: Some(vec![body]),
         ..Function::default()
@@ -2819,6 +2847,9 @@ fn generate_repeated_component(
             Access::Public, // Because Repeater accesses it
             generate_layout_item_info_decl(root_sc, &ctx),
         ));
+        repeater_struct
+            .members
+            .push((Access::Public, generate_flexbox_layout_item_info_decl(root_sc, &ctx)));
         if let Some(decl) = generate_grid_layout_input_decl(root_sc, &ctx) {
             repeater_struct.members.push((Access::Public, decl));
         }
@@ -4788,7 +4819,7 @@ fn generate_with_flexbox_layout_item_info(
 ) -> String {
     let repeated_indices_var_name = repeated_indices_var_name.map(ident);
     let mut push_code =
-        "std::vector<slint::cbindgen_private::LayoutItemInfo> cells_vector_h; std::vector<slint::cbindgen_private::LayoutItemInfo> cells_vector_v;".to_owned();
+        "std::vector<slint::cbindgen_private::FlexBoxLayoutItemInfo> cells_vector_h; std::vector<slint::cbindgen_private::FlexBoxLayoutItemInfo> cells_vector_v;".to_owned();
     let mut repeater_idx = 0usize;
 
     for item in elements {
@@ -4823,7 +4854,9 @@ fn generate_with_flexbox_layout_item_info(
                 repeater_idx += 1;
                 write!(
                     push_code,
-                    "self->repeater_{repeater_index}.for_each([&](const auto &sub_comp){{ cells_vector_h.push_back(sub_comp->layout_item_info(slint::cbindgen_private::Orientation::Horizontal, std::nullopt)); cells_vector_v.push_back(sub_comp->layout_item_info(slint::cbindgen_private::Orientation::Vertical, std::nullopt)); }});"
+                    "self->repeater_{repeater_index}.for_each([&](const auto &sub_comp){{ \
+                     cells_vector_h.push_back(sub_comp->flexbox_layout_item_info(slint::cbindgen_private::Orientation::Horizontal, std::nullopt)); \
+                     cells_vector_v.push_back(sub_comp->flexbox_layout_item_info(slint::cbindgen_private::Orientation::Vertical, std::nullopt)); }});"
                 )
                 .unwrap();
             }
@@ -4839,7 +4872,7 @@ fn generate_with_flexbox_layout_item_info(
         format!("std::array<int, {}> {ri}_array;", 2 * repeater_idx)
     });
     format!(
-        "[&]{{ {ri} {push_code} [[maybe_unused]] slint::cbindgen_private::Slice<slint::cbindgen_private::LayoutItemInfo>{cells_h} = slint::private_api::make_slice(std::span(cells_vector_h)); [[maybe_unused]] slint::cbindgen_private::Slice<slint::cbindgen_private::LayoutItemInfo>{cells_v} = slint::private_api::make_slice(std::span(cells_vector_v)); return {}; }}()",
+        "[&]{{ {ri} {push_code} [[maybe_unused]] slint::cbindgen_private::Slice<slint::cbindgen_private::FlexBoxLayoutItemInfo>{cells_h} = slint::private_api::make_slice(std::span(cells_vector_h)); [[maybe_unused]] slint::cbindgen_private::Slice<slint::cbindgen_private::FlexBoxLayoutItemInfo>{cells_v} = slint::private_api::make_slice(std::span(cells_vector_v)); return {}; }}()",
         compile_expression(sub_expression, ctx),
         cells_h = ident(cells_h_variable),
         cells_v = ident(cells_v_variable),
