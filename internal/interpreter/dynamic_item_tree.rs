@@ -234,7 +234,7 @@ impl RepeatedItemTree for ErasedItemTreeBox {
         let flex_align_self = eval::load_property(instance_ref, root_element, "flex-align-self")
             .ok()
             .and_then(|v| v.try_into().ok())
-            .unwrap_or(i_slint_core::items::FlexAlignSelf::Auto);
+            .unwrap_or(i_slint_core::items::FlexboxLayoutAlignSelf::Auto);
         let flex_order = load_f32("flex-order") as i32;
 
         i_slint_core::layout::FlexboxLayoutItemInfo {
@@ -915,7 +915,7 @@ pub async fn load(
     // If the native style should be Qt, resolve it here as we know that we have it
     let is_native = match &compiler_config.style {
         Some(s) => s == "native",
-        None => std::env::var("SLINT_STYLE").map_or(true, |s| s == "native"),
+        None => std::env::var("SLINT_STYLE").is_ok_and(|s| s == "native"),
     };
     if is_native {
         // On wasm, look at the browser user agent
