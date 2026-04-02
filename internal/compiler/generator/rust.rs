@@ -133,7 +133,10 @@ fn rust_property_type(ty: &Type) -> Option<proc_macro2::TokenStream> {
 }
 
 fn primitive_property_value(ty: &Type, property_accessor: MemberAccess) -> TokenStream {
-    let value = property_accessor.get_property();
+    primitive_value_from_property_value(ty, property_accessor.get_property())
+}
+
+fn primitive_value_from_property_value(ty: &Type, value: TokenStream) -> TokenStream {
     match ty {
         Type::LogicalLength => quote!(#value.get()),
         _ => value,
@@ -383,18 +386,21 @@ fn generate_public_component(
             }
         }
 
-        impl slint::ComponentHandle for #public_component_id {
+        impl slint::StrongHandle for #public_component_id {
             type WeakInner = sp::VWeak<sp::ItemTreeVTable, #inner_component_id>;
+
+            fn upgrade_from_weak_inner(inner: &Self::WeakInner) -> sp::Option<Self> {
+                sp::Some(Self(inner.upgrade()?))
+            }
+        }
+
+        impl slint::ComponentHandle for #public_component_id {
             fn as_weak(&self) -> slint::Weak<Self> {
                 slint::Weak::new(sp::VRc::downgrade(&self.0))
             }
 
             fn clone_strong(&self) -> Self {
                 Self(self.0.clone())
-            }
-
-            fn upgrade_from_weak_inner(inner: &Self::WeakInner) -> sp::Option<Self> {
-                sp::Some(Self(inner.upgrade()?))
             }
 
             fn run(&self) -> ::core::result::Result<(), slint::PlatformError> {
@@ -1171,12 +1177,24 @@ fn generate_sub_component(
                 let mut access = quote!();
                 let mut ty = ctx.property_ty(prop2);
                 for f in fields {
-                    let Type::Struct (s) = &ty else { panic!("Field of two way binding on a non-struct type") };
+                    let Type::Struct(s) = &ty else {
+                        panic!("Field of two way binding on a non-struct type")
+                    };
                     let a = struct_field_access(s, f);
                     access.extend(quote!(.#a));
                     ty = s.fields.get(f).unwrap();
                 }
-                quote!(sp::Property::link_two_way_with_map(#p2, #p1, |s| s #access .clone(), |s, v| s #access = v.clone()))
+                let to_property_value =
+                    set_primitive_property_value(ty, quote!(s #access .clone()));
+                let to_struct_value = primitive_value_from_property_value(ty, quote!((*v).clone()));
+                quote!(
+                    sp::Property::link_two_way_with_map(
+                        #p2,
+                        #p1,
+                        |s| #to_property_value,
+                        |s, v| s #access = #to_struct_value,
+                    )
+                )
             }
         });
         init.push(quote!(#r;))
@@ -1605,15 +1623,28 @@ fn generate_global(
         let aliases = global.aliases.iter().map(|name| ident(name));
         let getters = generate_global_getters(global, root);
 
+        let strong_handle_impl = quote!(
+            impl slint::StrongHandle for #public_component_id<'static> {
+                type WeakInner = sp::Weak<#inner_component_id>;
+
+                fn upgrade_from_weak_inner(inner: &Self::WeakInner) -> ::core::option::Option<Self> {
+                    let inner = ::core::pin::Pin::new(inner.upgrade()?);
+                    ::core::option::Option::Some(Self(inner, ::core::marker::PhantomData::default()))
+                }
+            }
+        );
+
         quote!(
             #[allow(unused)]
-            pub struct #public_component_id<'a>(#pub_token &'a ::core::pin::Pin<sp::Rc<#inner_component_id>>);
+            pub struct #public_component_id<'a>(#pub_token ::core::pin::Pin<sp::Rc<#inner_component_id>>, #pub_token ::core::marker::PhantomData<&'a #inner_component_id>);
 
             impl<'a> #public_component_id<'a> {
                 #property_and_callback_accessors
             }
             #(pub type #aliases<'a> = #public_component_id<'a>;)*
             #getters
+
+            #strong_handle_impl
         )
     });
 
@@ -1623,7 +1654,7 @@ fn generate_global(
             #[const_field_offset(sp::const_field_offset)]
             #[repr(C)]
             #[pin]
-            #pub_token struct #inner_component_id {
+            pub struct #inner_component_id {
                 #(#pub_token  #declared_property_vars: sp::Property<#declared_property_types>,)*
                 #(#pub_token  #declared_callbacks: sp::Callback<(#(#declared_callbacks_types,)*), #declared_callbacks_ret>,)*
                 #(#pub_token  #change_tracker_names : sp::ChangeTracker,)*
@@ -1661,8 +1692,15 @@ fn generate_global_getters(
         let root_component_id = ident(&c.name);
         quote! {
             impl<'a> slint::Global<'a, #root_component_id> for #public_component_id<'a> {
+                type StaticSelf = #public_component_id<'static>;
+
                 fn get(component: &'a #root_component_id) -> Self {
-                    Self(&component.0.globals.get().unwrap().#global_id)
+                    Self(component.0.globals.get().unwrap().#global_id.clone(), ::core::marker::PhantomData::default())
+                }
+
+                fn as_weak(&self) -> slint::Weak<Self::StaticSelf> {
+                    let inner = ::core::pin::Pin::into_inner(self.0.clone());
+                    slint::Weak::new(sp::Rc::downgrade(&inner))
                 }
             }
         }
