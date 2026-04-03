@@ -2595,6 +2595,14 @@ fn access_item_rc(pr: &llr::MemberReference, ctx: &EvaluationContext) -> TokenSt
     quote!(&sp::ItemRc::new(#component_rc_tokens, #item_index_tokens))
 }
 
+/// Compile `expr` to a Rust expression returning an owned value.
+fn compile_expression_to_value(expr: &Expression, ctx: &EvaluationContext) -> TokenStream {
+    let compiled_expr = compile_expression(expr, ctx);
+
+    quote!((#compiled_expr).clone())
+}
+
+/// Compile `expr` to a Rust expression which may potentially return a reference.
 fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream {
     match expr {
         Expression::StringLiteral(s) => {
@@ -2657,7 +2665,7 @@ fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream
                             let fields = lhs.fields.iter().enumerate().map(|(index, (name, _))| {
                                 let index = proc_macro2::Literal::usize_unsuffixed(index);
                                 let name = ident(name);
-                                quote!(the_struct.#name =  obj.#index as _;)
+                                quote!(the_struct.#name = (obj.#index).clone() as _;)
                             });
                             let id = struct_name_to_tokens(targetstruct).unwrap();
                             quote!({ let obj = #f; let mut the_struct = #id::default(); #(#fields)* the_struct })
@@ -2740,7 +2748,7 @@ fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream
         }
         Expression::CallBackCall { callback, arguments } => {
             let f = access_member(callback, ctx);
-            let a = arguments.iter().map(|a| compile_expression(a, ctx));
+            let a = arguments.iter().map(|a| compile_expression_to_value(a, ctx));
             if expr.ty(ctx) == Type::Void {
                 f.then(|f| quote!(#f.call(&(#(#a as _,)*))))
             } else {
@@ -2845,8 +2853,8 @@ fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream
         }
         Expression::BinaryExpression { lhs, rhs, op } => {
             let lhs_ty = lhs.ty(ctx);
-            let lhs = compile_expression_no_parenthesis(lhs, ctx);
-            let rhs = compile_expression_no_parenthesis(rhs, ctx);
+            let lhs = compile_expression_to_value_no_parenthesis(lhs, ctx);
+            let rhs = compile_expression_to_value_no_parenthesis(rhs, ctx);
 
             if lhs_ty.as_unit_product().is_some() && (*op == '=' || *op == '!') {
                 let maybe_negate = if *op == '!' { quote!(!) } else { quote!() };
@@ -2943,7 +2951,7 @@ fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream
             )
         }
         Expression::Array { values, element_ty, output } => {
-            let val = values.iter().map(|e| compile_expression(e, ctx));
+            let val = values.iter().map(|e| compile_expression_to_value(e, ctx));
             match output {
                 ArrayOutput::Model => {
                     let rust_element_ty = rust_primitive_type(element_ty).unwrap();
@@ -2958,7 +2966,7 @@ fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream
             }
         }
         Expression::Struct { ty, values } => {
-            let elem = ty.fields.keys().map(|k| values.get(k).map(|e| compile_expression(e, ctx)));
+            let elem = ty.fields.keys().map(|k| values.get(k).map(|e| compile_expression_to_value(e, ctx)));
             if ty.name.is_some() {
                 let name_tokens = struct_name_to_tokens(&ty.name).unwrap();
                 let keys = ty.fields.keys().map(|k| ident(k));
@@ -2966,7 +2974,7 @@ fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream
                 {
                     quote!(#name_tokens{#(#keys: #elem as _,)*})
                 } else {
-                    quote!({ let mut the_struct = #name_tokens::default(); #(the_struct.#keys =  #elem as _;)* the_struct})
+                    quote!({ let mut the_struct = #name_tokens::default(); #(the_struct.#keys = #elem as _;)* the_struct})
                 }
             } else {
                 let as_ = ty.fields.values().map(|t| {
@@ -2980,7 +2988,7 @@ fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream
                     }
                 });
                 // This will produce a tuple
-                quote!((#(#elem #as_,)*))
+                quote!((#((#elem).clone() #as_,)*))
             }
         }
 
@@ -2991,7 +2999,7 @@ fn compile_expression(expr: &Expression, ctx: &EvaluationContext) -> TokenStream
         }
         Expression::ReadLocalVariable { name, .. } => {
             let name = ident(name);
-            quote!(#name.clone())
+            quote!(#name)
         }
         Expression::EasingCurve(EasingCurve::Linear) => {
             quote!(sp::EasingCurve::Linear)
@@ -3207,7 +3215,7 @@ fn compile_builtin_function_call(
     arguments: &[Expression],
     ctx: &EvaluationContext,
 ) -> TokenStream {
-    let mut a = arguments.iter().map(|a| compile_expression(a, ctx));
+    let mut a = arguments.iter().map(|a| compile_expression_to_value(a, ctx));
     match function {
         BuiltinFunction::SetFocusItem => {
             if let [Expression::PropertyReference(pr)] = arguments {
@@ -3685,6 +3693,10 @@ fn compile_builtin_function_call(
             let window_adapter_tokens = access_window_adapter_field(ctx);
             quote!(sp::WindowInner::from_pub(#window_adapter_tokens.window()).color_scheme())
         }
+        BuiltinFunction::AccentColor => {
+            let window_adapter_tokens = access_window_adapter_field(ctx);
+            quote!(sp::WindowInner::from_pub(#window_adapter_tokens.window()).accent_color())
+        }
         BuiltinFunction::SupportsNativeMenuBar => {
             let window_adapter_tokens = access_window_adapter_field(ctx);
             quote!(sp::WindowInner::from_pub(#window_adapter_tokens.window()).supports_native_menu_bar())
@@ -3731,11 +3743,10 @@ fn compile_builtin_function_call(
                     quote!(sp::MenuFromItemTree::new(sp::VRc::into_dyn(menu_item_tree_instance)))
                 };
                 quote! {
-                    let menu_item_tree = #menu_from_item_tree;
+                    let menu_item_tree = sp::VRc::new(#menu_from_item_tree);
                     if sp::WindowInner::from_pub(#window_adapter_tokens.window()).supports_native_menu_bar() {
-                        let menu_item_tree = sp::VRc::new(menu_item_tree);
-                        let menu_item_tree = sp::VRc::into_dyn(menu_item_tree);
-                        sp::WindowInner::from_pub(#window_adapter_tokens.window()).setup_menubar(menu_item_tree);
+                        let menu_item_tree_dyn = sp::VRc::into_dyn(sp::VRc::clone(&menu_item_tree));
+                        sp::WindowInner::from_pub(#window_adapter_tokens.window()).setup_menubar(menu_item_tree_dyn);
                     } else
                 }
             };
@@ -3744,23 +3755,25 @@ fn compile_builtin_function_call(
                 let menu_item_tree_instance = #item_tree_id::new(_self.self_weak.get().unwrap().clone()).unwrap();
                 #native_impl
                 /*else*/ {
-                    let menu_item_tree = sp::Rc::new(menu_item_tree);
-                    let menu_item_tree_ = menu_item_tree.clone();
+                    let menu_item_tree_ = sp::VRc::clone(&menu_item_tree);
                     #access_entries.set_binding(move || {
                         let mut entries = sp::SharedVector::default();
-                        sp::Menu::sub_menu(&*menu_item_tree_, sp::Option::None, &mut entries);
+                        sp::VRc::borrow(&menu_item_tree_).sub_menu(sp::Option::None, &mut entries);
+                        sp::ModelRc::new(sp::SharedVectorModel::from(entries))
+                    });
+                    let menu_item_tree_ = sp::VRc::clone(&menu_item_tree);
+                    #access_sub_menu.set_handler(move |entry| {
+                        let mut entries = sp::SharedVector::default();
+                        sp::VRc::borrow(&menu_item_tree_).sub_menu(sp::Option::Some(&entry.0), &mut entries);
                         sp::ModelRc::new(sp::SharedVectorModel::from(entries))
                     });
                     let menu_item_tree_ = menu_item_tree.clone();
-                    #access_sub_menu.set_handler(move |entry| {
-                        let mut entries = sp::SharedVector::default();
-                        sp::Menu::sub_menu(&*menu_item_tree_, sp::Option::Some(&entry.0), &mut entries);
-                        sp::ModelRc::new(sp::SharedVectorModel::from(entries))
-                    });
                     #access_activated.set_handler(move |entry| {
-                        sp::Menu::activate(&*menu_item_tree, &entry.0);
+                        sp::VRc::borrow(&menu_item_tree_).activate(&entry.0);
                     });
                 }
+                sp::WindowInner::from_pub(#window_adapter_tokens.window())
+                    .setup_menubar_shortcuts(sp::VRc::into_dyn(menu_item_tree));
             })
         }
         BuiltinFunction::MonthDayCount => {
@@ -4518,7 +4531,11 @@ pub fn generate_named_exports(exports: &crate::object_tree::Exports) -> Vec<Toke
         .collect::<Vec<_>>()
 }
 
-fn compile_expression_no_parenthesis(expr: &Expression, ctx: &EvaluationContext) -> TokenStream {
+fn remove_parenthesis(
+    expr: &Expression,
+    ctx: &EvaluationContext,
+    compile: impl FnOnce(&Expression, &EvaluationContext) -> TokenStream,
+) -> TokenStream {
     fn extract_single_group(stream: &TokenStream) -> Option<TokenStream> {
         let mut iter = stream.clone().into_iter();
         let elem = iter.next()?;
@@ -4532,13 +4549,24 @@ fn compile_expression_no_parenthesis(expr: &Expression, ctx: &EvaluationContext)
         Some(elem.stream())
     }
 
-    let mut stream = compile_expression(expr, ctx);
+    let mut stream = compile(expr, ctx);
     if !matches!(expr, Expression::Struct { .. }) {
         while let Some(s) = extract_single_group(&stream) {
             stream = s;
         }
     }
     stream
+}
+
+fn compile_expression_no_parenthesis(expr: &Expression, ctx: &EvaluationContext) -> TokenStream {
+    remove_parenthesis(expr, ctx, compile_expression)
+}
+
+fn compile_expression_to_value_no_parenthesis(
+    expr: &Expression,
+    ctx: &EvaluationContext,
+) -> TokenStream {
+    remove_parenthesis(expr, ctx, compile_expression_to_value)
 }
 
 #[cfg(feature = "bundle-translations")]

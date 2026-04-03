@@ -2341,6 +2341,17 @@ impl WindowAdapterInternal for QtWindow {
         ds.as_ref().get()
     }
 
+    fn accent_color(&self) -> i_slint_core::graphics::Color {
+        let argb = cpp! {unsafe [] -> u32 as "QRgb" {
+            #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+                return qApp->palette().color(QPalette::Accent).rgba();
+            #else
+                return qApp->palette().color(QPalette::Highlight).rgba();
+            #endif
+        }};
+        i_slint_core::graphics::Color::from_argb_encoded(argb)
+    }
+
     fn bring_to_front(&self) -> Result<(), i_slint_core::platform::PlatformError> {
         let widget_ptr = self.widget_ptr();
         cpp! {unsafe [widget_ptr as "QWidget*"] {
@@ -2529,7 +2540,7 @@ pub(crate) fn restart_timer() {
 
 mod key_codes {
     macro_rules! define_qt_key_to_string_fn {
-        ($($char:literal # $name:ident # $($shifted:expr)? $(=> $($qt:ident)|* # $($winit:ident $(($_pos:ident))?)|* # $($_xkb:ident)|* )? ;)*) => {
+        ($($char:literal # $name:ident # $($shifted:ident)? # $($_muda:ident)? $(=> $($qt:ident)|* # $($winit:ident $(($_pos:ident))?)|* # $($_xkb:ident)|* )? ;)*) => {
             use crate::key_generated;
             pub fn qt_key_to_string(key: key_generated::Qt_Key) -> Option<i_slint_core::SharedString> {
 
