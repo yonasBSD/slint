@@ -1,7 +1,7 @@
 // Copyright © SixtyFPS GmbH <info@slint.dev>
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
 
-// cSpell: ignore nesw
+// cSpell: ignore nesw windowitem
 
 /*!
 This module contains the builtin items, either in this file or in sub-modules.
@@ -75,6 +75,7 @@ type ItemRendererRef<'a> = &'a mut dyn crate::item_rendering::ItemRenderer;
 /// Workarounds for cbindgen
 pub type VoidArg = ();
 pub type KeyEventArg = (KeyEvent,);
+pub type DragActionArg = (DragAction,);
 type FocusReasonArg = (FocusReason,);
 type PointerEventArg = (PointerEvent,);
 type PointerScrollEventArg = (PointerScrollEvent,);
@@ -1767,6 +1768,8 @@ pub struct BoxShadow {
     pub offset_y: Property<LogicalLength>,
     pub color: Property<Color>,
     pub blur: Property<LogicalLength>,
+    pub spread: Property<LogicalLength>,
+    pub inset: Property<bool>,
     pub cached_rendering_data: CachedRenderingData,
 }
 
@@ -1848,9 +1851,15 @@ impl Item for BoxShadow {
         _self_rc: &ItemRc,
         geometry: LogicalRect,
     ) -> LogicalRect {
-        geometry
-            .outer_rect(euclid::SideOffsets2D::from_length_all_same(self.blur()))
-            .translate(LogicalVector::from_lengths(self.offset_x(), self.offset_y()))
+        if self.inset() {
+            // Inset shadow paints inside the geometry; never extends outside.
+            geometry
+        } else {
+            let pad = self.blur() + LogicalLength::new(self.spread().get().max(0 as crate::Coord));
+            geometry
+                .outer_rect(euclid::SideOffsets2D::from_length_all_same(pad))
+                .translate(LogicalVector::from_lengths(self.offset_x(), self.offset_y()))
+        }
     }
 
     fn clips_children(self: core::pin::Pin<&Self>) -> bool {

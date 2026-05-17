@@ -1,6 +1,7 @@
 // Copyright © SixtyFPS GmbH <info@slint.dev>
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
 
+// cSpell: ignore blitting
 use std::cell::RefCell;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -499,6 +500,12 @@ impl<'a, R: femtovg::Renderer + TextureImporter> ItemRenderer for GLItemRenderer
                 && box_shadow.offset_x() == LogicalLength::zero()
                 && box_shadow.offset_y() == LogicalLength::zero())
         {
+            return;
+        }
+        // TODO: implement inset shadows and spread for femtovg. Until then, skip rendering inset
+        // shadows entirely (otherwise they'd render incorrectly as a drop shadow). Spread is
+        // silently ignored.
+        if box_shadow.inset() {
             return;
         }
 
@@ -1151,7 +1158,7 @@ impl<'a, R: femtovg::Renderer + TextureImporter> GLItemRenderer<'a, R> {
     // In some cases (e.g. when rendering text), the canvas needs to be aligned to the pixel grid.
     // Otherwise, even with nearest-neighbor scaling, the glyphs can have strange artifacts, as
     // the nearest-neighbor algorithm is unstable if the pixel coordinate is at exactly 0.5px,
-    // which is very noticable with text.
+    // which is very noticeable with text.
     //
     // Note that this will currently only align the canvas if it is not rotated and not scaled.
     fn align_canvas_during<Result>(
