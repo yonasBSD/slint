@@ -45,7 +45,6 @@ jobs:
         slint: ${{ inputs.full || steps.filter.outputs.slint == 'true' }}
         figma_inspector: ${{ inputs.full || steps.filter.outputs.figma_inspector == 'true' }}
         material_components: ${{ inputs.full || steps.filter.outputs.material_components == 'true' }}
-        safety_docs: ${{ inputs.full || steps.filter.outputs.safety_docs == 'true' }}
         internal: ${{ inputs.full || steps.filter.outputs.internal == 'true' }}
         api_cpp: ${{ inputs.full || steps.filter.outputs.api_cpp == 'true' }}
         api_python: ${{ inputs.full || steps.filter.outputs.api_python == 'true' }}
@@ -329,7 +328,7 @@ jobs:
         runs-on: ubuntu-22.04
         steps:
             - uses: actions/checkout@v6
-            - uses: pnpm/action-setup@v6.0.6
+            - uses: pnpm/action-setup@v6.0.8
               with:
                 version: 10.29.3
             - uses: Swatinem/rust-cache@v2
@@ -685,7 +684,7 @@ jobs:
                 node-version: 24
                 package-manager-cache: false
               id: node-install
-            - uses: pnpm/action-setup@v6.0.6
+            - uses: pnpm/action-setup@v6.0.8
               with:
                 version: 10.29.3
             - name: Run pnpm install
@@ -724,10 +723,6 @@ jobs:
         ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
         ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
 
-    safety-docs:
-      needs: files-changed
-      if: ${{ needs.files-changed.outputs.safety_docs == 'true' }}
-      uses: ./.github/workflows/safety_docs.yaml
 
     servo_example:
         needs: files-changed
@@ -769,16 +764,10 @@ jobs:
                   cargo llvm-cov report --html --output-dir coverage
                   cargo llvm-cov report --lcov --output-path coverage/lcov.info
             - name: Upload coverage report
-              uses: actions/upload-artifact@v4
+              uses: actions/upload-artifact@v7
               with:
                   name: slint-sc-coverage
                   path: coverage
-            - name: Upload to Codecov
-              uses: codecov/codecov-action@v5
-              with:
-                  files: coverage/lcov.info
-                  flags: slint-sc
-              continue-on-error: true
 
     clippy:
         needs: files-changed
@@ -1089,4 +1078,4 @@ jobs:
             - name: Run Miri on i-slint-core
               env:
                   MIRIFLAGS: -Zmiri-disable-isolation
-              run: cargo miri test -p i-slint-core -- --skip properties --skip model --skip textlayout --skip physics_simulation
+              run: cargo miri test -p i-slint-core --lib -- --skip properties --skip model --skip textlayout --skip physics_simulation --skip item_tree

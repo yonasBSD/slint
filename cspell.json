@@ -149,12 +149,14 @@
         "Oooops",
         "opengl",
         "opengles",
+        "Pandoc",
         "pico",
         "pixmap",
         "prestart",
         "printerdemo",
         "pythonw",
         "replacen",
+        "rehype",
         "Rgba",
         "riscv",
         "rowspan",
@@ -307,6 +309,7 @@
         "yellowgreen"
     ],
     "ignorePaths": [
+        ".github/**",
         "api/cpp/docs/conf.py",
         "CHANGELOG.md",
         "cspell.json",
