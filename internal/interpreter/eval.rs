@@ -3,6 +3,7 @@
 
 use crate::api::{SetPropertyError, Struct, Value};
 use crate::dynamic_item_tree::{CallbackHandler, InstanceRef};
+use core::ffi::c_void;
 use core::pin::Pin;
 use corelib::graphics::{
     ConicGradientBrush, GradientStop, LinearGradientBrush, PathElement, RadialGradientBrush,
@@ -48,7 +49,7 @@ pub trait ErasedPropertyInfo {
 
     /// Safety: Property2 must be a (pinned) pointer to a `Property<T>`
     /// where T is the same T as the one represented by this property.
-    unsafe fn link_two_ways(&self, item: Pin<ItemRef>, property2: *const ());
+    unsafe fn link_two_ways(&self, item: Pin<ItemRef>, property2: *const c_void);
 
     fn prepare_for_two_way_binding(&self, item: Pin<ItemRef>) -> Pin<Rc<corelib::Property<Value>>>;
 
@@ -96,7 +97,7 @@ impl<Item: vtable::HasStaticVTable<corelib::items::ItemVTable>> ErasedPropertyIn
     fn set_debug_name(&self, item: Pin<ItemRef>, name: String) {
         (*self).set_debug_name(ItemRef::downcast_pin(item).unwrap(), name);
     }
-    unsafe fn link_two_ways(&self, item: Pin<ItemRef>, property2: *const ()) {
+    unsafe fn link_two_ways(&self, item: Pin<ItemRef>, property2: *const c_void) {
         // Safety: ErasedPropertyInfo::link_two_ways and PropertyInfo::link_two_ways have the same safety requirement
         unsafe { (*self).link_two_ways(ItemRef::downcast_pin(item).unwrap(), property2) }
     }
@@ -179,6 +180,15 @@ impl<'a, 'id> EvalLocalContext<'a, 'id> {
             local_variables: Default::default(),
             return_value: None,
         }
+    }
+}
+
+/// Evaluate `expression` as a length / number and return the resulting f32.
+/// Caller's responsibility to only pass length-typed expressions.
+fn eval_to_f32(expression: &Expression, local_context: &mut EvalLocalContext) -> f32 {
+    match eval_expression(expression, local_context) {
+        Value::Number(n) => n as f32,
+        other => unreachable!("expected length-typed expression; got {other:?} for {expression:?}"),
     }
 }
 
@@ -599,10 +609,17 @@ pub fn eval_expression(expression: &Expression, local_context: &mut EvalLocalCon
                 panic!("invalid layout cache")
             }
         }
-        Expression::ComputeBoxLayoutInfo(lay, o) => {
-            crate::eval_layout::compute_box_layout_info(lay, *o, local_context)
+        Expression::ComputeBoxLayoutInfo { layout, orientation, cross_axis_size } => {
+            let cross = cross_axis_size.as_deref().map(|e| eval_to_f32(e, local_context));
+            crate::eval_layout::compute_box_layout_info(layout, *orientation, local_context, cross)
         }
-        Expression::ComputeGridLayoutInfo { layout_organized_data_prop, layout, orientation } => {
+        Expression::ComputeGridLayoutInfo {
+            layout_organized_data_prop,
+            layout,
+            orientation,
+            cross_axis_size,
+        } => {
+            let cross = cross_axis_size.as_deref().map(|e| eval_to_f32(e, local_context));
             let cache = load_property_helper(
                 &ComponentInstance::InstanceRef(local_context.component_instance),
                 &layout_organized_data_prop.element(),
@@ -615,6 +632,7 @@ pub fn eval_expression(expression: &Expression, local_context: &mut EvalLocalCon
                     &organized_data,
                     *orientation,
                     local_context,
+                    cross,
                 )
             } else {
                 panic!("invalid layout organized data cache")
@@ -647,8 +665,14 @@ pub fn eval_expression(expression: &Expression, local_context: &mut EvalLocalCon
         Expression::SolveFlexboxLayout(layout) => {
             crate::eval_layout::solve_flexbox_layout(layout, local_context)
         }
-        Expression::ComputeFlexboxLayoutInfo(layout, orientation) => {
-            crate::eval_layout::compute_flexbox_layout_info(layout, *orientation, local_context)
+        Expression::ComputeFlexboxLayoutInfo { layout, orientation, cross_axis_size } => {
+            let cross = cross_axis_size.as_deref().map(|e| eval_to_f32(e, local_context));
+            crate::eval_layout::compute_flexbox_layout_info(
+                layout,
+                *orientation,
+                local_context,
+                cross,
+            )
         }
         Expression::MinMax { ty: _, op, lhs, rhs } => {
             let Value::Number(lhs) = eval_expression(lhs, local_context) else {
