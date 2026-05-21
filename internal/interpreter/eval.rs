@@ -1012,6 +1012,7 @@ fn call_builtin_function(
                     &menu_item_tree,
                     &enclosing_component,
                     None,
+                    None,
                 );
 
                 if component.access_window(|window| {
@@ -1484,7 +1485,9 @@ fn call_builtin_function(
                 Expression::PropertyReference(activated_nr),
                 Expression::ElementReference(item_tree_root),
                 Expression::BoolLiteral(no_native),
-                rest @ ..,
+                condition,
+                visible,
+                ..,
             ] = arguments
             else {
                 panic!("internal error: incorrect argument count to SetupMenuBar")
@@ -1495,7 +1498,8 @@ fn call_builtin_function(
             let menu_item_tree = crate::dynamic_item_tree::make_menu_item_tree(
                 &menu_item_tree,
                 &component,
-                rest.first(),
+                Some(condition),
+                Some(visible),
             );
 
             let window_adapter = component.window_adapter();
@@ -1553,6 +1557,7 @@ fn call_builtin_function(
                 &menu_item_tree_component,
                 &enclosing_component,
                 rest.first(),
+                None,
             );
 
             let system_tray =
@@ -2131,6 +2136,9 @@ pub(crate) fn invoke_callback(
             if element.id == element.enclosing_component.upgrade().unwrap().root_element.borrow().id
             {
                 if let Some(callback_offset) = description.custom_callbacks.get(callback_name) {
+                    if let Some(tracker_offset) = description.callback_trackers.get(callback_name) {
+                        tracker_offset.apply_pin(enclosing_component.instance).get();
+                    }
                     let callback = callback_offset.apply(&*enclosing_component.instance);
                     let res = callback.call(args);
                     return Some(if res != Value::Void {
@@ -2184,6 +2192,9 @@ pub(crate) fn set_callback_handler(
                 if let Some(callback_offset) = description.custom_callbacks.get(callback_name) {
                     let callback = callback_offset.apply(&*enclosing_component.instance);
                     callback.set_handler(handler);
+                    if let Some(tracker_offset) = description.callback_trackers.get(callback_name) {
+                        tracker_offset.apply_pin(enclosing_component.instance).mark_dirty();
+                    }
                     return Ok(());
                 } else if enclosing_component.description.original.is_global() {
                     return Err(());
