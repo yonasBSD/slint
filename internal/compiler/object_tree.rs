@@ -102,14 +102,29 @@ impl Document {
             }
         }
 
+        #[cfg(feature = "slint-sc")]
+        let mut sc_exported_count: u32 = 0;
+
         let mut process_component =
             |n: syntax_nodes::Component,
              diag: &mut BuildDiagnostics,
-             local_registry: &mut TypeRegister| {
+             local_registry: &mut TypeRegister,
+             #[cfg(feature = "slint-sc")] sc_exported_count: &mut u32,
+             #[cfg(feature = "slint-sc")] is_exported: bool| {
                 // Globals already get their own "Globals are not supported" message
                 #[cfg(feature = "slint-sc")]
                 if n.child_text(SyntaxKind::Identifier).as_deref() != Some("global") {
-                    diag.slint_sc_error("Component declarations are", &n.DeclaredIdentifier());
+                    if !is_exported {
+                        diag.slint_sc_error("Component declarations are", &n.DeclaredIdentifier());
+                    } else {
+                        *sc_exported_count += 1;
+                        if *sc_exported_count > 1 {
+                            diag.slint_sc_error(
+                                "Multiple exported components per file are",
+                                &n.DeclaredIdentifier(),
+                            );
+                        }
+                    }
                 }
                 let compo = Component::from_node(n, diag, local_registry);
                 if !local_registry.add(compo.clone()) {
@@ -190,7 +205,15 @@ impl Document {
         for n in node.children() {
             match n.kind() {
                 SyntaxKind::Component => {
-                    process_component(n.into(), diag, &mut local_registry);
+                    process_component(
+                        n.into(),
+                        diag,
+                        &mut local_registry,
+                        #[cfg(feature = "slint-sc")]
+                        &mut sc_exported_count,
+                        #[cfg(feature = "slint-sc")]
+                        false,
+                    );
                 }
                 SyntaxKind::StructDeclaration => {
                     process_struct(n.into(), diag, &mut local_registry, &mut inner_types)
@@ -201,9 +224,15 @@ impl Document {
                 SyntaxKind::ExportsList => {
                     for n in n.children() {
                         match n.kind() {
-                            SyntaxKind::Component => {
-                                process_component(n.into(), diag, &mut local_registry)
-                            }
+                            SyntaxKind::Component => process_component(
+                                n.into(),
+                                diag,
+                                &mut local_registry,
+                                #[cfg(feature = "slint-sc")]
+                                &mut sc_exported_count,
+                                #[cfg(feature = "slint-sc")]
+                                true,
+                            ),
                             SyntaxKind::StructDeclaration => process_struct(
                                 n.into(),
                                 diag,
@@ -850,6 +879,10 @@ pub struct Element {
     /// their width — lets the parent supply the width and avoid the
     /// recursion that would happen via the descendants' width property.
     pub layout_info_v_with_constraint: Option<NamedReference>,
+    /// Mirror of `layout_info_v_with_constraint` for the horizontal axis.
+    /// Synthesized on flex elements whose horizontal layout info would
+    /// otherwise read their own height (column-direction or unknown).
+    pub layout_info_h_with_constraint: Option<NamedReference>,
     /// Whether we have `preferred-{width,height}: 100%`
     pub default_fill_parent: (bool, bool),
 
@@ -1114,7 +1147,7 @@ impl Element {
                 Ok(ty) => {
                     #[cfg(feature = "slint-sc")]
                     match &ty {
-                        ElementType::Builtin(b) => {
+                        ElementType::Builtin(b) if !b.slint_sc => {
                             diag.slint_sc_error(
                                 &format!("The builtin element '{}' is", b.name),
                                 &base_node,
@@ -2137,6 +2170,23 @@ impl Element {
         None
     }
 
+    /// Mirror of [`Self::inherited_layout_info_v_with_constraint`] for the
+    /// horizontal axis.
+    pub fn inherited_layout_info_h_with_constraint(&self) -> Option<NamedReference> {
+        if let Some(nr) = &self.layout_info_h_with_constraint {
+            return Some(nr.clone());
+        }
+        let mut base = self.base_type.clone();
+        while let ElementType::Component(base_comp) = base {
+            let root = base_comp.root_element.borrow();
+            if let Some(nr) = &root.layout_info_h_with_constraint {
+                return Some(nr.clone());
+            }
+            base = root.base_type.clone();
+        }
+        None
+    }
+
     /// Returns the element's name as specified in the markup, not normalized.
     pub fn original_name(&self) -> SmolStr {
         self.debug
@@ -2754,6 +2804,11 @@ pub fn visit_all_named_references_in_element(
         vis(nr);
     }
     elem.borrow_mut().layout_info_v_with_constraint = constrained_v;
+    let mut constrained_h = std::mem::take(&mut elem.borrow_mut().layout_info_h_with_constraint);
+    if let Some(nr) = constrained_h.as_mut() {
+        vis(nr);
+    }
+    elem.borrow_mut().layout_info_h_with_constraint = constrained_h;
     let mut debug = std::mem::take(&mut elem.borrow_mut().debug);
     for d in debug.iter_mut() {
         if let Some(l) = d.layout.as_mut() {
