@@ -5,13 +5,13 @@ import { fileURLToPath } from "node:url";
 import { generateThirdPartyMarkdown } from "@slint/common-files/src/utils/thirdparty.ts";
 
 const scriptsDir = dirname(fileURLToPath(import.meta.url));
-const docsNodejsRoot = join(scriptsDir, "..");
-const repoRoot = join(docsNodejsRoot, "..", "..");
+const docsPythonRoot = join(scriptsDir, "..");
+const repoRoot = join(docsPythonRoot, "..", "..");
 
 generateThirdPartyMarkdown({
-    crateDir: join(repoRoot, "api", "node"),
+    crateDir: join(repoRoot, "api", "python", "slint"),
     outFile: join(
-        docsNodejsRoot,
+        docsPythonRoot,
         "src",
         "content",
         "docs",
