@@ -38,7 +38,7 @@ fn enums(path: &Path) -> anyhow::Result<()> {
         (Orientation) => {
             Some(None)
         };
-        (AccessibleLive) => {
+        (AccessibleLiveRegion) => {
             Some(None)
         };
         (AccessibleRole) => {
@@ -326,7 +326,6 @@ fn gen_corelib(
         "ClippedImage",
         "TouchArea",
         "TooltipArea",
-        "ToolTip",
         "FocusScope",
         "KeyBinding",
         "SwipeGestureHandler",
@@ -373,7 +372,6 @@ fn gen_corelib(
         "PointerEvent",
         "PointerScrollEvent",
         "Rect",
-        "SortOrder",
         "BitmapFont",
         "DataTransferOpaque",
     ]
