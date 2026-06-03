@@ -1174,7 +1174,6 @@ export component ScaleRotateGestureHandler {
     /// The cumulative scale factor of the gesture. Always starts at `1.0` when the gesture begins.
     /// A value greater than `1.0` means zooming in, less than `1.0` means zooming out.
     /// When the gesture is not active, the value is `1.0`.
-    /// \default 1.0
     out property <float> scale;
     /// The cumulative rotation angle of the gesture. Always starts at `0deg` when the gesture begins.
     /// Positive values indicate clockwise rotation, negative values indicate counter-clockwise rotation.
@@ -2475,7 +2474,7 @@ export component TooltipArea inherits Empty {
     // Pointer y within this area during hover.
     out property <length> mouse-y;
     // Tooltip configuration folded from the user-facing Tooltip element during lowering.
-    in property <string> text;
+    in property <styled-text> text;
     // Delay and offset are not user-facing in 1.17; the values used here are the
     // built-in defaults applied to the synthesized element on instantiation.
     in property <duration> delay: 500ms;
@@ -2500,7 +2499,7 @@ export component TooltipArea inherits Empty {
 ///             text: "Hover me";
 ///
 ///             Tooltip {
-///                 text: "This is a tooltip";
+///                 text: @markdown("This is a tooltip");
 ///             }
 ///         }
 ///     }
@@ -2582,7 +2581,7 @@ export component TooltipArea inherits Empty {
 export component Tooltip inherits Empty {
     /// The text to display in the tooltip.
     /// Don't set this property when using custom content.
-    in property <string> text;
+    in property <styled-text> text;
     //-can_be_declared_without_children_slot
     //-is_non_item_type
 }
@@ -2779,13 +2778,11 @@ export global Platform {
     /// :::note{Note}
     /// When Slint is ported to new operating systems in the future, new enum values will be added.
     /// :::
-    /// \default known at runtime
     out property <OperatingSystemType> os;
     /// The name of the currently selected <Link type="StyleWidgets" label="widget style"/>. Some widget
     /// styles have dark and light variant suffixes, such as `fluent-light`. This property contains the
     /// style name without the suffix. Use <Link type="Palette" label="Palette"/>'s `color-scheme` to
     /// determine the currently used scheme.
-    /// \default known at runtime
     out property <string> style-name;
     /// Opens the specified URL in an external browser. This function invokes the platform's URL opening mechanism.
     /// Returns `true` on success, or `false` if the platform doesn't support opening URLs or the operation failed.
