@@ -107,8 +107,18 @@ pub fn generate(args: &GenerateArgs) -> anyhow::Result<()> {
     let mut rows: Vec<CrateRow> = Vec::new();
 
     for pkg in &packages {
-        let Some(expression) = pkg.license.clone() else {
-            bail!("Crate {} {} has no license information", pkg.name, pkg.version);
+        // A few older crates declare only `license-file = "..."` (no SPDX
+        // expression). Fall back to recognizing the canonical text of a
+        // well-known license, and salvage a `Copyright …` line for the author
+        // column from the same file.
+        let (expression, fallback_author) = match pkg.license.clone() {
+            Some(e) => (e, None),
+            None => {
+                let (id, copyright) = detect_from_license_file(pkg).with_context(|| {
+                    format!("Crate {} {} has no license information", pkg.name, pkg.version)
+                })?;
+                (id.to_string(), Some(copyright))
+            }
         };
 
         // Lax parsing accepts the deprecated `/` OR-separator and imprecise
@@ -136,10 +146,18 @@ pub fn generate(args: &GenerateArgs) -> anyhow::Result<()> {
             used_ids.insert(id);
         }
 
+        // The `authors` field is optional and newer crates increasingly omit
+        // it; salvage the copyright holder(s) from the license files shipped
+        // in the crate's package instead.
+        let author = fallback_author
+            .or_else(|| (!pkg.authors.is_empty()).then(|| pkg.authors.join(", ")))
+            .or_else(|| authors_from_license_files(pkg))
+            .unwrap_or_default();
+
         rows.push(CrateRow {
             name: pkg.name.to_string(),
             version: pkg.version.to_string(),
-            author: pkg.authors.join(", "),
+            author,
             license: expression,
         });
     }
@@ -369,6 +387,113 @@ fn dependency_enabled(
     }
     // If no matching manifest entry was found (unusual), keep the dependency.
     !matched
+}
+
+/// Fallback for crates that declare only `license-file = "..."` (no SPDX
+/// `license` field): read that file and recognize the canonical text of one of
+/// the licenses in `ACCEPTED`, plus the copyright holder(s) from its
+/// `Copyright …` lines. Bails when either cannot be identified.
+fn detect_from_license_file(
+    pkg: &cargo_metadata::Package,
+) -> anyhow::Result<(&'static str, String)> {
+    let path = pkg.license_file().context("no license-file field either")?;
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("Cannot read license file {path}"))?;
+    let normalized = text.to_ascii_lowercase().split_whitespace().collect::<Vec<_>>().join(" ");
+    // Distinctive phrases per license. All required phrases must be present.
+    const FINGERPRINTS: &[(&str, &[&str])] = &[
+        (
+            "MIT",
+            &["permission is hereby granted, free of charge", "the software is provided \"as is\""],
+        ),
+        ("Apache-2.0", &["apache license", "version 2.0", "licensed under the apache license"]),
+        ("BSL-1.0", &["boost software license", "version 1.0"]),
+        ("ISC", &["permission to use, copy, modify, and/or distribute this software"]),
+        ("Zlib", &["this software is provided 'as-is', without any express or implied warranty"]),
+        ("Unlicense", &["this is free and unencumbered software released into the public domain"]),
+        ("CC0-1.0", &["creative commons cc0 1.0 universal"]),
+    ];
+    let id = FINGERPRINTS
+        .iter()
+        .find(|(_, needles)| needles.iter().all(|n| normalized.contains(n)))
+        .map(|(id, _)| *id)
+        .with_context(|| format!("Cannot recognize the contents of {path} as a known license"))?;
+    let copyright = copyright_holders([&text])
+        .with_context(|| format!("Cannot find a copyright holder in {path}"))?;
+    Ok((id, copyright))
+}
+
+/// Fallback author for crates whose manifest carries no `authors`: salvage
+/// the copyright holder(s) from the license files shipped in the crate's
+/// package (`LICENSE*` / `COPYING*` / `NOTICE*` next to its `Cargo.toml`).
+/// Returns `None` when no such file yields an attribution line.
+fn authors_from_license_files(pkg: &cargo_metadata::Package) -> Option<String> {
+    let dir = pkg.manifest_path.parent()?;
+    let mut paths: Vec<PathBuf> = std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path.file_name().and_then(|n| n.to_str()).is_some_and(|name| {
+                    let name = name.to_ascii_lowercase();
+                    ["license", "licence", "copying", "notice"]
+                        .iter()
+                        .any(|prefix| name.starts_with(prefix))
+                })
+        })
+        .collect();
+    paths.sort();
+    // Unreadable (e.g. non-UTF-8) files are skipped.
+    copyright_holders(paths.iter().filter_map(|path| std::fs::read_to_string(path).ok()))
+}
+
+/// Salvage any `Copyright …` lines from the given license texts. The leading
+/// `Copyright`, year and surrounding punctuation are stripped, leaving just
+/// the rights holders. Matches are deduplicated and joined with `, `; returns
+/// `None` when no copyright line is found.
+fn copyright_holders<T: AsRef<str>>(texts: impl IntoIterator<Item = T>) -> Option<String> {
+    let mut holders: Vec<String> = Vec::new();
+    for text in texts {
+        for raw in text.as_ref().lines() {
+            let line = raw.trim().trim_end_matches('.');
+            let Some(rest) =
+                line.get(..9).filter(|s| s.eq_ignore_ascii_case("Copyright")).map(|_| &line[9..])
+            else {
+                continue;
+            };
+            // Only lines where the keyword is followed by a `(c)`/`©` marker
+            // or a year carry an attribution. This skips license prose that
+            // merely mentions a "copyright license ..." as well as the
+            // Apache-2.0 appendix template
+            // `Copyright [yyyy] [name of copyright owner]`.
+            let rest = rest.trim_start();
+            if !rest.starts_with(['(', '©']) && !rest.starts_with(|c: char| c.is_ascii_digit()) {
+                continue;
+            }
+            // Strip an optional `(c)` / `©` marker first (only here may
+            // `c`/`C` be consumed), then a leading year or year-range and its
+            // separators.
+            let rest = rest
+                .trim_start_matches(|c: char| "()cC©".contains(c))
+                .trim_start_matches(|c: char| {
+                    c.is_ascii_digit() || c.is_ascii_whitespace() || ",-".contains(c)
+                })
+                .trim();
+            // License files wrap their lines, which can leave a holder-list
+            // entry ending in a dangling conjunction ("… Sun Microsystems
+            // or"). Drop it.
+            let rest = rest
+                .strip_suffix(" or")
+                .or_else(|| rest.strip_suffix(" and"))
+                .unwrap_or(rest)
+                .trim();
+            if !rest.is_empty() && !holders.iter().any(|h| h == rest) {
+                holders.push(rest.to_string());
+            }
+        }
+    }
+    (!holders.is_empty()).then(|| holders.join(", "))
 }
 
 /// The canonical SPDX string for a requirement, e.g. `MIT` or
