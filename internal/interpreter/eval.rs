@@ -15,6 +15,7 @@ use corelib::model::{Model, ModelExt, ModelRc, VecModel};
 use corelib::rtti::AnimatedBindingKind;
 use corelib::window::{WindowInner, WindowKind};
 use corelib::{Brush, Color, PathData, SharedString, SharedVector};
+use i_slint_compiler::diagnostics::Spanned;
 use i_slint_compiler::expression_tree::{
     BuiltinFunction, Callable, EasingCurve, Expression, MinMaxOp, Path as ExprPath,
     PathElement as ExprPathElement,
@@ -735,10 +736,31 @@ fn call_builtin_function(
         BuiltinFunction::Debug => {
             let to_print: SharedString =
                 eval_expression(&arguments[0], local_context).try_into().unwrap();
-            local_context.component_instance.description.debug_handler.borrow()(
-                source_location.as_ref(),
-                &to_print,
-            );
+            let location = source_location.as_ref().and_then(|location| {
+                location.source_file().map(|file| {
+                    let (line, column) = file.line_column(
+                        location.span.offset,
+                        i_slint_compiler::diagnostics::ByteFormat::Utf8,
+                    );
+                    corelib::debug_log::DebugLogLocation {
+                        path: file.path().to_string_lossy().to_shared_string(),
+                        line,
+                        column,
+                    }
+                })
+            });
+            let root_weak =
+                vtable::VWeak::into_dyn(local_context.component_instance.root_weak().clone());
+            if let Some(root) = root_weak.upgrade()
+                && let Some(ctx) = corelib::window::context_for_root(&root)
+            {
+                ctx.dispatch_debug_log(location.as_ref(), format_args!("{to_print}"));
+            } else {
+                corelib::debug_log::debug_log_with_location(
+                    location.as_ref(),
+                    format_args!("{to_print}"),
+                );
+            }
             Value::Void
         }
         BuiltinFunction::DecimalSeparator => Value::String(
@@ -1768,8 +1790,8 @@ fn call_builtin_function(
             let window_adapter = local_context.component_instance.window_adapter();
             Value::Bool(corelib::open_url(&url, window_adapter.window()).is_ok())
         }
-        BuiltinFunction::BringAllToFront => {
-            corelib::bring_all_to_front();
+        BuiltinFunction::MacosBringAllWindowsToFront => {
+            corelib::macos_bring_all_windows_to_front();
             Value::Void
         }
         BuiltinFunction::ParseMarkdown => {
@@ -2146,6 +2168,14 @@ pub(crate) fn invoke_callback(
     generativity::make_guard!(guard);
     match enclosing_component_instance_for_element(element, component_instance, guard) {
         ComponentInstance::InstanceRef(enclosing_component) => {
+            // Keep the component alive while the callback runs: the callback may close the popup
+            // that owns this callback, and Callback::call() restores the handler after returning.
+            let _component_guard = enclosing_component
+                .self_weak()
+                .get()
+                .expect("component self weak must be initialized before invoking callbacks")
+                .upgrade()
+                .expect("component must be alive while invoking callbacks");
             let description = enclosing_component.description;
             let element = element.borrow();
             if element.id == element.enclosing_component.upgrade().unwrap().root_element.borrow().id
@@ -2242,6 +2272,14 @@ pub(crate) fn call_function(
     generativity::make_guard!(guard);
     match enclosing_component_instance_for_element(element, component_instance, guard) {
         ComponentInstance::InstanceRef(c) => {
+            // Keep the component alive while the function runs: the function may close the popup
+            // that owns this function or callbacks it invokes.
+            let _component_guard = c
+                .self_weak()
+                .get()
+                .expect("component self weak must be initialized before invoking functions")
+                .upgrade()
+                .expect("component must be alive while invoking functions");
             let mut ctx = EvalLocalContext::from_function_arguments(c, args);
             eval_expression(
                 &element.borrow().bindings.get(function_name)?.borrow().expression,
