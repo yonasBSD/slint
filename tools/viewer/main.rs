@@ -2,8 +2,11 @@
 // SPDX-License-Identifier: GPL-3.0-only OR LicenseRef-Slint-Royalty-free-2.0 OR LicenseRef-Slint-Software-3.0
 
 #![doc = include_str!("README.md")]
+#![cfg_attr(slint_nightly_test, feature(non_exhaustive_omitted_patterns_lint))]
+#![cfg_attr(slint_nightly_test, warn(non_exhaustive_omitted_patterns))]
 
 mod debug;
+mod print_diagnostics;
 mod screenshot;
 
 #[cfg(feature = "remote")]
@@ -104,15 +107,25 @@ struct Cli {
     #[arg(long, value_name = "json file", action)]
     save_data: Option<std::path::PathBuf>,
 
-    /// Render the component to an image file and exit instead of opening a window.
-    /// The file format is inferred from the extension (e.g. .png, .jpg).
-    /// Use `-` to write a PNG to standard output. The component is rendered at its
-    /// preferred size with a headless renderer (Skia's software rasterizer when the
-    /// `renderer-skia` feature is enabled, otherwise Slint's software renderer); pass
-    /// `--backend` to pick another renderer. Set `SLINT_SCALE_FACTOR` to override the
-    /// default scale factor of 1. Incompatible with `--auto-reload` and `--remote`.
+    /// Render the component to an image and exit.
+    /// The format follows the extension (e.g. `.png`, `.jpg`);
+    /// use `-` to write a PNG to standard output.
     #[arg(long, value_name = "image file", action)]
     screenshot: Option<std::path::PathBuf>,
+
+    /// Compile, print any diagnostics, and exit without opening a window.
+    /// Exit status is 1 on errors, 0 otherwise (warnings still print).
+    #[arg(
+        long,
+        action,
+        conflicts_with_all = ["auto_reload", "screenshot", "save_data", "load_data", "on", "remote"],
+    )]
+    check: bool,
+
+    /// Format for compiler diagnostics: `human` (colored, to stderr) or `json`
+    /// (a single array on stdout).
+    #[arg(long, value_name = "format", default_value = "human")]
+    diagnostics_format: print_diagnostics::DiagnosticsFormat,
 
     /// Specify callbacks handler.
     /// The first argument is the callback name, and the second argument is a string that is going
@@ -170,16 +183,38 @@ fn main() -> Result<()> {
     if args.screenshot.is_some() {
         if args.auto_reload {
             eprintln!("Cannot pass both --auto-reload and --screenshot");
-            std::process::exit(-1);
+            std::process::exit(2);
         }
         if args.save_data.is_some() {
             eprintln!("Cannot pass both --save-data and --screenshot");
-            std::process::exit(-1);
+            std::process::exit(2);
         }
         #[cfg(feature = "remote")]
         if args.remote {
             eprintln!("Cannot pass both --remote and --screenshot");
-            std::process::exit(-1);
+            std::process::exit(2);
+        }
+    }
+
+    // JSON goes to stdout, so reject other flags that claim stdout. Auto-reload
+    // uses its own diagnostic renderer that doesn't honor the format.
+    if args.diagnostics_format == print_diagnostics::DiagnosticsFormat::Json {
+        let is_stdout = |p: &std::path::Path| p == std::path::Path::new("-");
+        if args.screenshot.as_deref().is_some_and(is_stdout) {
+            eprintln!(
+                "--diagnostics-format json conflicts with --screenshot - (both write to stdout)"
+            );
+            std::process::exit(2);
+        }
+        if args.save_data.as_deref().is_some_and(is_stdout) {
+            eprintln!(
+                "--diagnostics-format json conflicts with --save-data - (both write to stdout)"
+            );
+            std::process::exit(2);
+        }
+        if args.auto_reload {
+            eprintln!("--diagnostics-format json is not supported with --auto-reload");
+            std::process::exit(2);
         }
     }
 
@@ -200,7 +235,7 @@ fn main() -> Result<()> {
 
     if args.auto_reload && args.save_data.is_some() {
         eprintln!("Cannot pass both --auto-reload and --save-data");
-        std::process::exit(-1);
+        std::process::exit(2);
     }
 
     #[cfg(feature = "gettext")]
@@ -219,6 +254,12 @@ fn main() -> Result<()> {
     }
 
     let compiler = init_compiler(&args);
+
+    if args.check {
+        let result = poll_ready(compiler.build_from_path(args.path()));
+        print_diagnostics::print_diagnostics(&result, args.diagnostics_format);
+        std::process::exit(if result.has_errors() { 1 } else { 0 });
+    }
 
     if args.auto_reload {
         select_backend(args.backend.as_deref())?;
@@ -250,7 +291,7 @@ fn main() -> Result<()> {
         instance.run()?;
     } else {
         let result = poll_ready(compiler.build_from_path(args.path()));
-        result.print_diagnostics();
+        print_diagnostics::print_diagnostics(&result, args.diagnostics_format);
         if result.has_errors() {
             std::process::exit(-1);
         }
@@ -543,6 +584,7 @@ fn execute_cmd(cmd: &str, callback_args: &[Value]) -> Result<()> {
     let callback_args = callback_args
         .iter()
         .map(|v| {
+            #[cfg_attr(slint_nightly_test, allow(non_exhaustive_omitted_patterns))]
             Ok(match v {
                 Value::Number(x) => x.to_string(),
                 Value::String(x) => x.to_string(),
