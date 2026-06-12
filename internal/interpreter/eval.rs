@@ -1137,6 +1137,7 @@ fn call_builtin_function(
                     corelib::items::PopupClosePolicy::CloseOnClickOutside,
                     &item_rc,
                     WindowKind::Menu,
+                    Box::new(|_| {}),
                 );
                 context_menu_elem.popup_id.set(Some(id));
             });
@@ -1841,6 +1842,8 @@ fn call_item_member_function(nr: &NamedReference, local_context: &mut EvalLocalC
             "cut" => textinput.cut(&window_adapter, &item_rc),
             "copy" => textinput.copy(&window_adapter, &item_rc),
             "paste" => textinput.paste(&window_adapter, &item_rc),
+            "undo" => textinput.undo(&window_adapter, &item_rc),
+            "redo" => textinput.redo(&window_adapter, &item_rc),
             _ => panic!("internal: Unknown member function {name} called on TextInput"),
         }
     } else if let Some(s) = ItemRef::downcast_pin::<corelib::items::SwipeGestureHandler>(item_ref) {

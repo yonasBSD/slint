@@ -229,6 +229,7 @@ framebuffers
 freetype
 frontends
 Fsvg
+fullsize
 Fullwidth
 fvar
 Fwww
@@ -526,6 +527,7 @@ serde
 setattr
 SETFL
 Shaderiv
+shadowable
 sharedfontique
 sharedstring
 sharedvector

@@ -539,12 +539,15 @@ macro_rules! for_each_enums {
             /// It indicates that an element is a live region whose content changes should be
             /// announced by assistive technologies.
             #[non_exhaustive]
-            enum AccessibleLiveRegion {
-                /// The element is not a live region.
+            enum AccessibleLiveness {
+                /// Use in regions that present information that is of low-importance to the user.
+                /// Assistive technologies are expected to not announce changes unless the user explicitly asks for it.
                 Off,
-                /// Updates are announced when the user is idle.
+                /// Use in regions that present new information to users.
+                /// Assistive technologies are expected to not interrupt the user to inform of changes to the live region.
                 Polite,
-                /// Updates are announced as soon as possible.
+                /// Use in regions that present information that a user should know about right away.
+                /// Assistive technologies are expected to announce to the user as soon as possible.
                 Assertive,
             }
 

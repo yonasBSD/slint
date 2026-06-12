@@ -27,8 +27,7 @@
 
 `slint-viewer --check ui/main.slint` compiles the file and prints diagnostics
 without opening a window (Slint >= 1.17): exit 1 on errors, 0 otherwise
-(warnings still print). `--diagnostics-format json` emits them as a JSON
-array on stdout instead. `-I`/`-L`/`--style` apply. Use this as the fast
+(warnings still print). `-I`/`-L`/`--style` apply. Use this as the fast
 per-file compile check; the host build is only needed for the interop side.
 
 ## Headless screenshots of a `.slint` file (`slint-viewer --screenshot`)
@@ -67,15 +66,20 @@ old.)
 
 ### Enabling
 
-Build with `SLINT_EMIT_DEBUG_INFO=1` (preserves element IDs/source locations),
-set `SLINT_MCP_PORT` to a free TCP port of your choice (the server binds
-`127.0.0.1:<port>` and logs `Slint MCP server listening on …`, or an error if
-the port is taken), and pass `--features slint/mcp` on the command line (do
-**not** put `mcp` in `Cargo.toml`):
+Always set `SLINT_EMIT_DEBUG_INFO=1` at *app* build time (preserves element
+IDs/source locations) and `SLINT_MCP_PORT` to a free TCP port at run time (the
+server binds `127.0.0.1:<port>` and logs `Slint MCP server listening on …`). The
+`mcp` feature must also be compiled into the Slint library:
+
+**Rust:** pass `--features slint/mcp` on the command line (do **not** put `mcp`
+in `Cargo.toml`):
 
 ```sh
 SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 cargo run --features slint/mcp
 ```
+
+**C++:** released packages don't carry the `mcp` feature — build Slint from
+source with `-DSLINT_FEATURE_MCP=ON`.
 
 **Headless** (CI, container, agent sandbox — no display server or GPU): also
 set `SLINT_BACKEND=headless`; the whole MCP toolset including
