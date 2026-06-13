@@ -56,6 +56,10 @@ slint-viewer --screenshot out.png --load-data props.json ui/main.slint
 Rule of thumb: **viewer** for previewing components/layout/theme; **MCP
 server** for the running app with real data and interactions.
 
+When the assistant host can display local images inline, include the rendered
+screenshot in the chat. In CLI-only hosts, print the absolute image path and
+summarize what was visually checked.
+
 ## MCP Server for AI-Assisted Debugging
 
 Slint **1.17+** ships an embedded MCP server: walk the UI tree, read
@@ -92,6 +96,30 @@ releases:
 
 ```sh
 SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 SLINT_BACKEND=headless cargo run --features slint/mcp
+```
+
+**Node.js** (`slint-ui`): install the optional `slint-ui-dev` package as a dev
+dependency at the same version as `slint-ui`. It ships a binary with the MCP
+server (and system-testing) compiled in, which `slint-ui` loads automatically —
+but only when `SLINT_MCP_PORT` (or `SLINT_TEST_SERVER`) is set, so ordinary runs
+stay on the lean release binary. There is nothing to import from it; set the
+variable before launching node:
+
+```sh
+npm install --save-dev slint-ui-dev
+SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 node app.js
+```
+
+**Python** (`slint`): install the optional `slint-dev` wheel at the same
+version as `slint` (`uv add "slint[dev]"`). It carries the MCP-enabled binary,
+which `slint` loads automatically — but only when `SLINT_MCP_PORT` (or
+`SLINT_TEST_SERVER`) is set, so ordinary runs stay on the lean release binary.
+Set the variable before importing slint (there is nothing to import from
+`slint-dev`):
+
+```sh
+uv add "slint[dev]"
+SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=9315 uv run app.py
 ```
 
 Connect to `http://localhost:9315/mcp` (Streamable HTTP / JSON-RPC). From a
